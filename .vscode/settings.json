@@ -1,0 +1,9 @@
+{
+    "rust-analyzer.checkOnSave": true,
+    "rust-analyzer.statusBar.clickAction": "stopServer",
+
+    "[rust]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    }
+}
