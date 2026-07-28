@@ -5,5 +5,7 @@
     "[rust]": {
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "rust-lang.rust-analyzer"
-    }
+    },
+
+    "C_Cpp.default.cStandard": "c23"
 }

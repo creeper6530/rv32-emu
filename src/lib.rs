@@ -313,6 +313,7 @@ pub enum Instruction {
 pub struct Cpu<'a> {
     regs: &'a mut RegArray,
     pc: Wrapping<u32>,
+    next_pc: Wrapping<u32>,
     memory: &'a mut AddressSpace,
 }
 
@@ -725,7 +726,7 @@ impl<'a> Cpu<'a> {
         };
 
         if take_branch {
-            self.pc += Wrapping(sign_extend32(imm, 13));
+            self.next_pc = self.pc + Wrapping(sign_extend32(imm, 13));
         }
         Ok(())
     }
@@ -736,8 +737,8 @@ impl<'a> Cpu<'a> {
             panic!("Expected J-type instruction");
         };
 
-        self.write_reg(rd, (self.pc + Wrapping(4)).0);
-        self.pc += Wrapping(sign_extend32(imm, 21));
+        self.write_reg(rd, self.next_pc.0); // next_pc is incremented after fetch
+        self.next_pc = self.pc + Wrapping(sign_extend32(imm, 21)); // Overwrite next_pc to jump target
         Ok(())
     }
 
@@ -755,10 +756,11 @@ impl<'a> Cpu<'a> {
             return Err(Fault::InvalidInstruction(instr));
         };
 
-        self.write_reg(rd, (self.pc + Wrapping(4)).0);
+        self.write_reg(rd, (self.next_pc).0);
 
         let target_address = self.read_reg(rs1).wrapping_add(sign_extend32(imm, 12));
-        self.pc = Wrapping(target_address & !1); // Clear the least significant bit
+        // Overwrite next_pc to jump target; clear the least significant bit
+        self.next_pc = Wrapping(target_address & !1);
         Ok(())
     }
 
@@ -829,6 +831,7 @@ impl<'a> Cpu<'a> {
         Cpu {
             regs,
             pc: Wrapping(0),
+            next_pc: Wrapping(0),
             memory,
         }
     }
@@ -850,11 +853,12 @@ impl<'a> Cpu<'a> {
 
     pub fn step(&mut self) -> Result<(), Fault> {
         let raw_instr = self.memory.read_32(self.pc.0)?;
+        self.next_pc = self.pc + Wrapping(4);
 
         let instr = self.decode(raw_instr)?;
         self.execute(instr)?;
 
-        self.pc += Wrapping(4);
+        self.pc = self.next_pc;
         Ok(())
     }
 

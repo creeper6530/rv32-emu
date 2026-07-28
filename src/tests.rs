@@ -95,3 +95,29 @@ fn program_c_memwrite() {
 
     assert_eq!(cpu.memory.read_32(0x2000_0040).unwrap(), 0x101);
 }
+
+#[test]
+fn program_c_functioncall() {
+    let mut memory = AddressSpace::new();
+    let mut regs = RegArray::new();
+
+    let mut cpu = Cpu::new(&mut regs, &mut memory);
+    cpu.reset(
+        None,
+        Some(include_bytes!("../c_test_progs/functioncall.bin")),
+    );
+
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    // Execute up until the `jal`, then check that the PC landed at the correct address
+    // To be edited when `functioncall.c` is changed`
+    assert_eq!(cpu.pc, Wrapping(INSTR_MEM_BASE + 0x28));
+
+    cpu.run().unwrap();
+
+    assert_eq!(cpu.memory.read_16(0x2000_0321).unwrap(), 15);
+}
