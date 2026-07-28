@@ -1,8 +1,8 @@
 #![no_std]
-#![allow(unused)]
 
 use core::num::Wrapping;
 
+#[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
 /*
@@ -19,9 +19,19 @@ const DATA_MEM_BASE: u32 = 0x2000_0000;
 const INSTR_MEM_END: u32 = INSTR_MEM_BASE + INSTR_MEM_SIZE;
 const DATA_MEM_END: u32 = DATA_MEM_BASE + DATA_MEM_SIZE;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Fault {
+    InvalidMemoryAccess(u32),
+    UndecodedInstruction(u32),
+    InvalidInstruction(Instruction),
+
+    AllZeroInstruction,
+    Halt,
+}
+
 // All accesses are little-endian
 #[derive(Debug, Clone, Copy)]
-struct AddressSpace {
+pub struct AddressSpace {
     instr: [u8; INSTR_MEM_SIZE as usize], // 1 KiB of instruction memory
     data: [u8; DATA_MEM_SIZE as usize],   // 1 KiB of data memory
 }
@@ -34,95 +44,135 @@ impl AddressSpace {
     }
 
     #[inline]
-    fn read_8(&self, addr: u32) -> u8 {
+    fn read_8(&self, addr: u32) -> Result<u8, Fault> {
         match addr {
             // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => self.instr[(addr - INSTR_MEM_BASE) as usize],
+            INSTR_MEM_BASE..INSTR_MEM_END => Ok(self.instr[(addr - INSTR_MEM_BASE) as usize]),
             // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => self.data[(addr - DATA_MEM_BASE) as usize],
-            _ => panic!("Invalid memory read at address: {:#X}", addr),
+            DATA_MEM_BASE..DATA_MEM_END => Ok(self.data[(addr - DATA_MEM_BASE) as usize]),
+            _ => {
+                error!("Invalid memory read at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 
     #[inline]
-    fn read_16(&self, addr: u32) -> u16 {
+    fn read_16(&self, addr: u32) -> Result<u16, Fault> {
         match addr {
             // Instruction memory
             INSTR_MEM_BASE..INSTR_MEM_END => {
                 let index = (addr - INSTR_MEM_BASE) as usize;
-                u16::from_le_bytes(*self.instr[index..=index + 1].as_array::<2>().unwrap())
+                Ok(u16::from_le_bytes(
+                    *self.instr[index..=index + 1].as_array::<2>().unwrap(),
+                ))
             }
             // Data memory
             DATA_MEM_BASE..DATA_MEM_END => {
                 let index = (addr - DATA_MEM_BASE) as usize;
-                u16::from_le_bytes(*self.data[index..=index + 1].as_array::<2>().unwrap())
+                Ok(u16::from_le_bytes(
+                    *self.data[index..=index + 1].as_array::<2>().unwrap(),
+                ))
             }
-            _ => panic!("Invalid memory read at address: {:#X}", addr),
+            _ => {
+                error!("Invalid memory read at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 
     #[inline]
-    fn read_32(&self, addr: u32) -> u32 {
+    fn read_32(&self, addr: u32) -> Result<u32, Fault> {
         match addr {
             // Instruction memory
             INSTR_MEM_BASE..INSTR_MEM_END => {
                 let index = (addr - INSTR_MEM_BASE) as usize;
-                u32::from_le_bytes(*self.instr[index..=index + 3].as_array::<4>().unwrap())
+                Ok(u32::from_le_bytes(
+                    *self.instr[index..=index + 3].as_array::<4>().unwrap(),
+                ))
             }
             // Data memory
             DATA_MEM_BASE..DATA_MEM_END => {
                 let index = (addr - DATA_MEM_BASE) as usize;
-                u32::from_le_bytes(*self.data[index..=index + 3].as_array::<4>().unwrap())
+                Ok(u32::from_le_bytes(
+                    *self.data[index..=index + 3].as_array::<4>().unwrap(),
+                ))
             }
-            _ => panic!("Invalid memory read at address: {:#X}", addr),
+            _ => {
+                error!("Invalid memory read at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 
     #[inline]
-    fn write_8(&mut self, addr: u32, value: u8) {
+    fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
         match addr {
             // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => panic!(
-                "Instruction memory is read-only, cannot write to address: {:#X}",
-                addr
-            ),
+            INSTR_MEM_BASE..INSTR_MEM_END => {
+                error!(
+                    "Instruction memory is read-only, cannot write to address: {:#X}",
+                    addr
+                );
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
             // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => self.data[(addr - DATA_MEM_BASE) as usize] = value,
-            _ => panic!("Invalid memory write at address: {:#X}", addr),
+            DATA_MEM_BASE..DATA_MEM_END => {
+                self.data[(addr - DATA_MEM_BASE) as usize] = value;
+                Ok(())
+            }
+            _ => {
+                error!("Invalid memory write at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 
     #[inline]
-    fn write_16(&mut self, addr: u32, value: u16) {
+    fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
         match addr {
             // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => panic!(
-                "Instruction memory is read-only, cannot write to address: {:#X}",
-                addr
-            ),
+            INSTR_MEM_BASE..INSTR_MEM_END => {
+                error!(
+                    "Instruction memory is read-only, cannot write to address: {:#X}",
+                    addr
+                );
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
             // Data memory
             DATA_MEM_BASE..DATA_MEM_END => {
                 let index = (addr - DATA_MEM_BASE) as usize;
                 self.data[index..=index + 1].copy_from_slice(&value.to_le_bytes());
+                Ok(())
             }
-            _ => panic!("Invalid memory write at address: {:#X}", addr),
+            _ => {
+                error!("Invalid memory write at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 
     #[inline]
-    fn write_32(&mut self, addr: u32, value: u32) {
+    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
         match addr {
             // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => panic!(
-                "Instruction memory is read-only, cannot write to address: {:#X}",
-                addr
-            ),
+            INSTR_MEM_BASE..INSTR_MEM_END => {
+                error!(
+                    "Instruction memory is read-only, cannot write to address: {:#X}",
+                    addr
+                );
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
             // Data memory
             DATA_MEM_BASE..DATA_MEM_END => {
                 let index = (addr - DATA_MEM_BASE) as usize;
                 self.data[index..=index + 3].copy_from_slice(&value.to_le_bytes());
+                Ok(())
             }
-            _ => panic!("Invalid memory write at address: {:#X}", addr),
+            _ => {
+                error!("Invalid memory write at address: {:#X}", addr);
+                Err(Fault::InvalidMemoryAccess(addr))
+            }
         }
     }
 }
@@ -133,16 +183,16 @@ impl Default for AddressSpace {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-struct RegArray([u32; 32]);
+pub struct RegArray([u32; 32]);
 impl RegArray {
-    fn new() -> Self {
+    pub fn new() -> Self {
         RegArray::default()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
-enum Regs {
+pub enum Regs {
     Zero = 0,
     Ra = 1,
     Sp = 2,
@@ -217,7 +267,7 @@ impl From<u8> for Regs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum Instruction {
+pub enum Instruction {
     RType {
         opcode: u8,
         rd: Regs,
@@ -260,7 +310,7 @@ enum Instruction {
 }
 
 #[derive(Debug)]
-struct Cpu<'a> {
+pub struct Cpu<'a> {
     regs: &'a mut RegArray,
     pc: Wrapping<u32>,
     memory: &'a mut AddressSpace,
@@ -283,11 +333,21 @@ impl<'a> Cpu<'a> {
         }
     }
 
-    fn decode(&self, instr: u32) -> Instruction {
+    #[inline]
+    fn decode(&self, instr: u32) -> Result<Instruction, Fault> {
+        if instr == 0 {
+            error!(
+                "All-zero instruction encountered at PC (illegal): {:#X}",
+                self.pc.0
+            );
+            return Err(Fault::AllZeroInstruction);
+        }
+
         let opcode = (instr & 0x7F) as u8;
 
         if opcode & 0b11 != 0b11 {
-            panic!("Compressed instructions are not supported");
+            error!("Compressed instructions are not supported");
+            return Err(Fault::UndecodedInstruction(instr));
         }
 
         match opcode {
@@ -298,14 +358,14 @@ impl<'a> Cpu<'a> {
                 let rs1 = ((instr >> 15) as u8 & 0x1F).into();
                 let rs2 = ((instr >> 20) as u8 & 0x1F).into();
                 let funct7 = (instr >> 25) as u8 & 0x7F;
-                Instruction::RType {
+                Ok(Instruction::RType {
                     opcode,
                     rd,
                     funct3,
                     rs1,
                     rs2,
                     funct7,
-                }
+                })
             }
             0b0010011 | 0b0000011 | 0b1100111 | 0b1110011 => {
                 // I-type
@@ -313,13 +373,13 @@ impl<'a> Cpu<'a> {
                 let funct3 = (instr >> 12) as u8 & 0x7;
                 let rs1 = ((instr >> 15) as u8 & 0x1F).into();
                 let imm = (instr >> 20) & 0xFFF;
-                Instruction::IType {
+                Ok(Instruction::IType {
                     opcode,
                     rd,
                     funct3,
                     rs1,
                     imm,
-                }
+                })
             }
             0b0100011 => {
                 // S-type
@@ -327,13 +387,13 @@ impl<'a> Cpu<'a> {
                 let rs1 = ((instr >> 15) as u8 & 0x1F).into();
                 let rs2 = ((instr >> 20) as u8 & 0x1F).into();
                 let imm = ((instr >> 7) & 0x1F) | (((instr >> 25) & 0x7F) << 5);
-                Instruction::SType {
+                Ok(Instruction::SType {
                     opcode,
                     funct3,
                     rs1,
                     rs2,
                     imm,
-                }
+                })
             }
             0b1100011 => {
                 // B-type
@@ -344,13 +404,13 @@ impl<'a> Cpu<'a> {
                              | ((instr >> 20) & 0b0011111100000) // imm[10:5]
                              | ((instr << 4)  & 0b0100000000000) // imm[11]
                              | ((instr >> 19) & 0b1000000000000);// imm[12]
-                Instruction::BType {
+                Ok(Instruction::BType {
                     opcode,
                     funct3,
                     rs1,
                     rs2,
                     imm,
-                }
+                })
             }
             0b1101111 => {
                 // J-type
@@ -359,51 +419,45 @@ impl<'a> Cpu<'a> {
                              | ((instr >> 9)  & 0b000000000100000000000) // imm[11]
                              | ( instr        & 0b011111111000000000000) // imm[19:12]
                              | ((instr >> 11) & 0b100000000000000000000);// imm[20]
-                Instruction::JType { opcode, rd, imm }
+                Ok(Instruction::JType { opcode, rd, imm })
             }
             0b0110111 => {
                 // U-type
                 let rd = ((instr >> 7) as u8 & 0x1F).into();
                 let imm = instr & 0xFFFFF000;
-                Instruction::UType { opcode, rd, imm }
+                Ok(Instruction::UType { opcode, rd, imm })
             }
-            _ => panic!("Unsupported opcode: {:#X}", opcode),
+            _ => Err(Fault::UndecodedInstruction(instr)),
         }
     }
 
-    fn execute(&mut self, instr: Instruction) {
+    #[inline]
+    fn execute(&mut self, instr: Instruction) -> Result<(), Fault> {
         match instr {
-            Instruction::RType { .. } => {
-                self.execute_arith_reg_reg(instr);
-            }
+            Instruction::RType { .. } => self.execute_arith_reg_reg(instr),
             Instruction::IType { opcode, .. } => match opcode {
                 0b0010011 => self.execute_arith_reg_imm(instr),
                 0b0000011 => self.execute_load(instr),
                 0b1100111 => self.execute_jalr(instr),
                 0b1110011 => self.execute_envops(instr),
-                _ => panic!("Unsupported I-type opcode: {:#X}", opcode),
+                _ => unreachable!("I-type instruction with bad opcode: {:?}", instr),
             },
-            Instruction::SType { .. } => {
-                self.execute_store(instr);
-            }
-            Instruction::BType { .. } => {
-                self.execute_branch(instr);
-            }
+            Instruction::SType { .. } => self.execute_store(instr),
+            Instruction::BType { .. } => self.execute_branch(instr),
             Instruction::UType { opcode, .. } => match opcode {
                 0b0110111 => self.execute_lui(instr),
                 0b0010111 => self.execute_auipc(instr),
-                _ => panic!("Unsupported U-type opcode: {:#X}", opcode),
+                _ => unreachable!("U-type instruction with bad opcode: {:?}", instr),
             },
-            Instruction::JType { opcode, .. } => {
-                self.execute_jal(instr);
-            }
+            Instruction::JType { .. } => self.execute_jal(instr),
         }
     }
 
     #[inline(always)]
-    fn execute_arith_reg_reg(&mut self, instr: Instruction) {
+    /// TODO: Use the never type for this once it stabilises
+    fn execute_arith_reg_reg(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::RType {
-            opcode,
+            opcode: _,
             rd,
             funct3,
             rs1,
@@ -476,12 +530,14 @@ impl<'a> Cpu<'a> {
             }
             _ => unreachable!("funct3 is 3 bits, instruction malformed: {:?}", instr),
         }
+
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_arith_reg_imm(&mut self, instr: Instruction) {
+    fn execute_arith_reg_imm(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::IType {
-            opcode,
+            opcode: _,
             rd,
             funct3,
             rs1,
@@ -544,12 +600,13 @@ impl<'a> Cpu<'a> {
             }
             _ => unreachable!("funct3 is 3 bits, instruction malformed: {:?}", instr),
         }
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_load(&mut self, instr: Instruction) {
+    fn execute_load(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::IType {
-            opcode,
+            opcode: _,
             rd,
             funct3,
             rs1,
@@ -565,40 +622,44 @@ impl<'a> Cpu<'a> {
             0x0 => {
                 // LB
                 // Upcasting as signed sign-extends
-                let value = self.memory.read_8(addr) as i8 as i32 as u32;
-                self.write_reg(rd, (value));
+                let value = self.memory.read_8(addr)? as i8 as i32 as u32;
+                self.write_reg(rd, value);
             }
             0x1 => {
                 // LH
                 // Upcasting as signed sign-extends
-                let value = self.memory.read_16(addr) as i16 as i32 as u32;
+                let value = self.memory.read_16(addr)? as i16 as i32 as u32;
                 self.write_reg(rd, value);
             }
             0x2 => {
                 // LW
-                let value = self.memory.read_32(addr);
+                let value = self.memory.read_32(addr)?;
                 self.write_reg(rd, value);
             }
             0x4 => {
                 // LBU
                 // Upcasting as unsigned zero-extends
-                let value = self.memory.read_8(addr) as u32;
+                let value = self.memory.read_8(addr)? as u32;
                 self.write_reg(rd, value);
             }
             0x5 => {
                 // LHU
                 // Upcasting as unsigned zero-extends
-                let value = self.memory.read_16(addr) as u32;
+                let value = self.memory.read_16(addr)? as u32;
                 self.write_reg(rd, value);
             }
-            _ => panic!("Illegal instruction: {:?}", instr),
+            _ => {
+                error!("Illegal instruction: {:?}", instr);
+                return Err(Fault::InvalidInstruction(instr));
+            }
         }
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_store(&mut self, instr: Instruction) {
+    fn execute_store(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::SType {
-            opcode,
+            opcode: _,
             funct3,
             rs1,
             rs2,
@@ -614,26 +675,30 @@ impl<'a> Cpu<'a> {
             0x0 => {
                 // SB
                 let value = (self.read_reg(rs2) & 0xFF) as u8;
-                self.memory.write_8(addr, value);
+                self.memory.write_8(addr, value)?;
             }
             0x1 => {
                 // SH
                 let value = (self.read_reg(rs2) & 0xFFFF) as u16;
-                self.memory.write_16(addr, value);
+                self.memory.write_16(addr, value)?;
             }
             0x2 => {
                 // SW
                 let value = self.read_reg(rs2);
-                self.memory.write_32(addr, value);
+                self.memory.write_32(addr, value)?;
             }
-            _ => panic!("Illegal instruction: {:?}", instr),
+            _ => {
+                error!("Illegal instruction: {:?}", instr);
+                return Err(Fault::InvalidInstruction(instr));
+            }
         }
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_branch(&mut self, instr: Instruction) {
+    fn execute_branch(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::BType {
-            opcode,
+            opcode: _,
             funct3,
             rs1,
             rs2,
@@ -653,95 +718,114 @@ impl<'a> Cpu<'a> {
             0x5 => (rs1_val as i32) >= (rs2_val as i32), // BGE
             0x6 => rs1_val < rs2_val,                    // BLTU
             0x7 => rs1_val >= rs2_val,                   // BGEU
-            _ => panic!("Illegal instruction: {:?}", instr),
+            _ => {
+                error!("Illegal instruction: {:?}", instr);
+                return Err(Fault::InvalidInstruction(instr));
+            }
         };
 
         if take_branch {
             self.pc += Wrapping(sign_extend32(imm, 13));
         }
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_jal(&mut self, instr: Instruction) {
-        let Instruction::JType { opcode, rd, imm } = instr else {
+    fn execute_jal(&mut self, instr: Instruction) -> Result<(), Fault> {
+        let Instruction::JType { opcode: _, rd, imm } = instr else {
             panic!("Expected J-type instruction");
         };
 
         self.write_reg(rd, (self.pc + Wrapping(4)).0);
         self.pc += Wrapping(sign_extend32(imm, 21));
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_jalr(&mut self, instr: Instruction) {
+    fn execute_jalr(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::IType {
-            opcode,
+            opcode: _,
             rd,
-            funct3,
+            funct3: _,
             rs1,
             imm,
         } = instr
         else {
-            panic!("Expected I-type instruction");
+            error!("Expected I-type instruction");
+            return Err(Fault::InvalidInstruction(instr));
         };
 
         self.write_reg(rd, (self.pc + Wrapping(4)).0);
 
         let target_address = self.read_reg(rs1).wrapping_add(sign_extend32(imm, 12));
         self.pc = Wrapping(target_address & !1); // Clear the least significant bit
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_lui(&mut self, instr: Instruction) {
-        let Instruction::UType { opcode, rd, imm } = instr else {
-            panic!("Expected U-type instruction");
+    fn execute_lui(&mut self, instr: Instruction) -> Result<(), Fault> {
+        let Instruction::UType { opcode: _, rd, imm } = instr else {
+            error!("Expected U-type instruction");
+            return Err(Fault::InvalidInstruction(instr));
         };
 
         // Immediate already ANDed with 0xFFFFF000 in decode
         // Lower 12 bits are supposed to be zeroed
         self.write_reg(rd, imm);
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_auipc(&mut self, instr: Instruction) {
-        let Instruction::UType { opcode, rd, imm } = instr else {
-            panic!("Expected U-type instruction");
+    fn execute_auipc(&mut self, instr: Instruction) -> Result<(), Fault> {
+        let Instruction::UType { opcode: _, rd, imm } = instr else {
+            error!("Expected U-type instruction");
+            return Err(Fault::InvalidInstruction(instr));
         };
 
         // Immediate already ANDed with 0xFFFFF000 in decode
         // Lower 12 bits are supposed to be zeroed
         let result = self.pc + Wrapping(imm);
         self.write_reg(rd, result.0);
+        Ok(())
     }
 
     #[inline(always)]
-    fn execute_envops(&mut self, instr: Instruction) {
+    fn execute_envops(&mut self, instr: Instruction) -> Result<(), Fault> {
         let Instruction::IType {
-            opcode,
-            rd,
-            funct3,
-            rs1,
+            opcode: _,
+            rd: _,
+            funct3: _,
+            rs1: _,
             imm,
         } = instr
         else {
-            panic!("Expected I-type instruction");
+            error!("Expected I-type instruction");
+            return Err(Fault::InvalidInstruction(instr));
         };
 
         match imm {
             0x000 => {
                 // ECALL
                 warn!("ECALL invoked at PC: {:#X}", self.pc.0);
+
+                // Currently NOOP
             }
             0x001 => {
                 // EBREAK
                 warn!("EBREAK invoked at PC: {:#X}", self.pc.0);
+                return Err(Fault::Halt);
             }
-            _ => panic!("Illegal instruction: {:?}", instr),
+            _ => {
+                error!("Illegal instruction: {:?}", instr);
+                return Err(Fault::InvalidInstruction(instr));
+            }
         }
+        Ok(())
     }
 }
 
 impl<'a> Cpu<'a> {
-    fn new(regs: &'a mut RegArray, memory: &'a mut AddressSpace) -> Self {
+    pub fn new(regs: &'a mut RegArray, memory: &'a mut AddressSpace) -> Self {
         Cpu {
             regs,
             pc: Wrapping(0),
@@ -751,7 +835,7 @@ impl<'a> Cpu<'a> {
 
     /// Meant to be called like `let mut cpu = Cpu::new(...).init(...);`,
     /// not `cpu.init(...)` on an existing instance
-    fn reset(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
+    pub fn reset(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
         info!("Resetting CPU");
 
         self.pc = Wrapping(entry_point.unwrap_or(INSTR_MEM_BASE));
@@ -764,19 +848,39 @@ impl<'a> Cpu<'a> {
         }
     }
 
-    fn step(&mut self) {
-        let raw_instr = self.memory.read_32(self.pc.0);
+    pub fn step(&mut self) -> Result<(), Fault> {
+        let raw_instr = self.memory.read_32(self.pc.0)?;
 
-        let instr = self.decode(raw_instr);
-        self.execute(instr);
+        let instr = self.decode(raw_instr)?;
+        self.execute(instr)?;
 
         self.pc += Wrapping(4);
+        Ok(())
+    }
+
+    /// Runs until a halt instruction is encountered or a fault occurs
+    ///
+    /// Halt is triggered by an ECALL with a0=1
+    pub fn run(&mut self) -> Result<(), Fault> {
+        loop {
+            match self.step() {
+                Ok(_) => {}
+                Err(Fault::Halt) => {
+                    info!("CPU halted at PC: {:#X}", self.pc.0);
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("CPU fault at PC: {:#X}: {:?}", self.pc.0, e);
+                    return Err(e);
+                }
+            }
+        }
     }
 }
 
 // Stolen from `binutils` crate under MIT license
 #[inline]
-fn sign_extend32(data: u32, size: u32) -> u32 {
+pub fn sign_extend32(data: u32, size: u32) -> u32 {
     assert!(size > 0 && size <= 32);
     let shamt = 32 - size;
     (((data << shamt) as i32) >> shamt) as u32

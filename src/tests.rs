@@ -36,7 +36,7 @@ fn program_nop() {
     let mut cpu = Cpu::new(&mut regs, &mut memory);
     cpu.reset(None, Some(&PROGRAM_NOP));
 
-    cpu.step();
+    cpu.step().unwrap();
 }
 
 const PROGRAM_ADDI: [u8; 4] = [
@@ -51,11 +51,12 @@ fn program_addi() {
     let mut cpu = Cpu::new(&mut regs, &mut memory);
     cpu.reset(None, Some(&PROGRAM_ADDI));
 
-    cpu.step();
+    cpu.step().unwrap();
 
     assert_eq!(cpu.read_reg(Regs::T0), 1);
 }
 
+// Assembler: https://riscv-simulator-five.vercel.app/
 const PROGRAM_MEMWRITE: [u8; 16] = [
     // construct 46a98 in t0
     0xb7, 0x72, 0x04, 0x00, // lui t0, 0x47
@@ -73,11 +74,24 @@ fn program_memwrite() {
     let mut cpu = Cpu::new(&mut regs, &mut memory);
     cpu.reset(None, Some(&PROGRAM_MEMWRITE));
 
-    cpu.step();
-    cpu.step();
-    cpu.step();
-    cpu.step();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
 
-    assert_eq!(cpu.memory.read_32(0x2000_0000), 0x46A98);
+    assert_eq!(cpu.memory.read_32(0x2000_0000).unwrap(), 0x46A98);
     assert_eq!(cpu.pc, Wrapping(INSTR_MEM_BASE + 16));
+}
+
+#[test]
+fn program_c_memwrite() {
+    let mut memory = AddressSpace::new();
+    let mut regs = RegArray::new();
+
+    let mut cpu = Cpu::new(&mut regs, &mut memory);
+    cpu.reset(None, Some(include_bytes!("../c_test_progs/memwrite.bin")));
+
+    cpu.run().unwrap();
+
+    assert_eq!(cpu.memory.read_32(0x2000_0040).unwrap(), 0x101);
 }
