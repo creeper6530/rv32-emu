@@ -1,7 +1,3 @@
-[package]
-name = "rv32-emu"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-log = "0.4.33"
+[workspace]
+resolver = "3"
+members = ["lib", "bin"]

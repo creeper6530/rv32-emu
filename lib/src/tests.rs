@@ -89,7 +89,10 @@ fn program_c_memwrite() {
     let mut regs = RegArray::new();
 
     let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(include_bytes!("../c_test_progs/memwrite.bin")));
+    cpu.reset(
+        None,
+        Some(include_bytes!("../../c_test_progs/memwrite.bin")),
+    );
 
     cpu.run().unwrap();
 
@@ -104,7 +107,7 @@ fn program_c_functioncall() {
     let mut cpu = Cpu::new(&mut regs, &mut memory);
     cpu.reset(
         None,
-        Some(include_bytes!("../c_test_progs/functioncall.bin")),
+        Some(include_bytes!("../../c_test_progs/functioncall.bin")),
     );
 
     cpu.step().unwrap();
@@ -128,7 +131,7 @@ fn program_c_branch() {
     let mut regs = RegArray::new();
 
     let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(include_bytes!("../c_test_progs/branch.bin")));
+    cpu.reset(None, Some(include_bytes!("../../c_test_progs/branch.bin")));
 
     cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
     cpu.run().unwrap();
