@@ -749,17 +749,18 @@ impl<'a> Cpu<'a> {
         }
     }
 
-    fn init(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
+    /// Meant to be called like `let mut cpu = Cpu::new(...).init(...);`,
+    /// not `cpu.init(...)` on an existing instance
+    fn reset(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
+        info!("Resetting CPU");
+
         self.pc = Wrapping(entry_point.unwrap_or(INSTR_MEM_BASE));
 
         // Initialize the stack pointer to the top of the data memory (growing downwards on RISC-V)
-        self.write_reg(Regs::Sp, DATA_MEM_BASE + DATA_MEM_SIZE);
+        self.write_reg(Regs::Sp, DATA_MEM_END);
 
         if let Some(program) = program {
-            // Load the program into instruction memory
-            for (i, &byte) in program.iter().enumerate() {
-                self.memory.write_8(INSTR_MEM_BASE + i as u32, byte);
-            }
+            self.memory.instr[0..program.len()].copy_from_slice(program);
         }
     }
 
