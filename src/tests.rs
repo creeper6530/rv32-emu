@@ -121,3 +121,22 @@ fn program_c_functioncall() {
 
     assert_eq!(cpu.memory.read_16(0x2000_0321).unwrap(), 15);
 }
+
+#[test]
+fn program_c_branch() {
+    let mut memory = AddressSpace::new();
+    let mut regs = RegArray::new();
+
+    let mut cpu = Cpu::new(&mut regs, &mut memory);
+    cpu.reset(None, Some(include_bytes!("../c_test_progs/branch.bin")));
+
+    cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
+    cpu.run().unwrap();
+    assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 123);
+
+    cpu.reset(None, None); // No need to reload the program
+
+    cpu.memory.write_32(0x2000_00FF, 777).unwrap(); // Odd number
+    cpu.run().unwrap();
+    assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 456);
+}
