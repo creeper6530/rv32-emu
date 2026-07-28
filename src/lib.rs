@@ -1,6 +1,10 @@
 #![no_std]
 #![allow(unused)]
 
+use core::num::Wrapping;
+
+use log::{debug, error, info, trace, warn};
+
 /*
 # MEMORY MAP:
 
@@ -16,12 +20,11 @@ const INSTR_MEM_END: u32 = INSTR_MEM_BASE + INSTR_MEM_SIZE;
 const DATA_MEM_END: u32 = DATA_MEM_BASE + DATA_MEM_SIZE;
 
 // All accesses are little-endian
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct AddressSpace {
     instr: [u8; INSTR_MEM_SIZE as usize], // 1 KiB of instruction memory
     data: [u8; DATA_MEM_SIZE as usize],   // 1 KiB of data memory
 }
-
 impl AddressSpace {
     fn new() -> Self {
         AddressSpace {
@@ -123,8 +126,19 @@ impl AddressSpace {
         }
     }
 }
+impl Default for AddressSpace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-type RegArray = [u32; 32];
+#[derive(Debug, Default, Clone, Copy)]
+struct RegArray([u32; 32]);
+impl RegArray {
+    fn new() -> Self {
+        RegArray::default()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -162,7 +176,6 @@ enum Regs {
     T5 = 30,
     T6 = 31,
 }
-
 impl From<u8> for Regs {
     fn from(value: u8) -> Self {
         match value {
@@ -249,7 +262,7 @@ enum Instruction {
 #[derive(Debug)]
 struct Cpu<'a> {
     regs: &'a mut RegArray,
-    pc: u32,
+    pc: Wrapping<u32>,
     memory: &'a mut AddressSpace,
 }
 
@@ -257,7 +270,7 @@ impl<'a> Cpu<'a> {
     #[inline]
     fn write_reg(&mut self, reg: Regs, value: u32) {
         if reg != Regs::Zero {
-            self.regs[reg as usize] = value;
+            self.regs.0[reg as usize] = value;
         }
     }
 
@@ -266,7 +279,7 @@ impl<'a> Cpu<'a> {
         if reg == Regs::Zero {
             0
         } else {
-            self.regs[reg as usize]
+            self.regs.0[reg as usize]
         }
     }
 
@@ -366,6 +379,8 @@ impl<'a> Cpu<'a> {
             Instruction::IType { opcode, .. } => match opcode {
                 0b0010011 => self.execute_arith_reg_imm(instr),
                 0b0000011 => self.execute_load(instr),
+                0b1100111 => self.execute_jalr(instr),
+                0b1110011 => self.execute_envops(instr),
                 _ => panic!("Unsupported I-type opcode: {:#X}", opcode),
             },
             Instruction::SType { .. } => {
@@ -374,9 +389,11 @@ impl<'a> Cpu<'a> {
             Instruction::BType { .. } => {
                 self.execute_branch(instr);
             }
-            Instruction::UType { .. } => {
-                //self.execute_utype(instr);
-            }
+            Instruction::UType { opcode, .. } => match opcode {
+                0b0110111 => self.execute_lui(instr),
+                0b0010111 => self.execute_auipc(instr),
+                _ => panic!("Unsupported U-type opcode: {:#X}", opcode),
+            },
             Instruction::JType { opcode, .. } => {
                 self.execute_jal(instr);
             }
@@ -613,6 +630,7 @@ impl<'a> Cpu<'a> {
         }
     }
 
+    #[inline(always)]
     fn execute_branch(&mut self, instr: Instruction) {
         let Instruction::BType {
             opcode,
@@ -639,20 +657,21 @@ impl<'a> Cpu<'a> {
         };
 
         if take_branch {
-            self.pc = self.pc.wrapping_add(sign_extend32(imm, 13));
+            self.pc += Wrapping(sign_extend32(imm, 13));
         }
     }
 
+    #[inline(always)]
     fn execute_jal(&mut self, instr: Instruction) {
         let Instruction::JType { opcode, rd, imm } = instr else {
             panic!("Expected J-type instruction");
         };
 
-        let return_address = self.pc.wrapping_add(4);
-        self.write_reg(rd, return_address);
-        self.pc = self.pc.wrapping_add(sign_extend32(imm, 21));
+        self.write_reg(rd, (self.pc + Wrapping(4)).0);
+        self.pc += Wrapping(sign_extend32(imm, 21));
     }
 
+    #[inline(always)]
     fn execute_jalr(&mut self, instr: Instruction) {
         let Instruction::IType {
             opcode,
@@ -665,11 +684,59 @@ impl<'a> Cpu<'a> {
             panic!("Expected I-type instruction");
         };
 
-        let return_address = self.pc.wrapping_add(4);
-        self.write_reg(rd, return_address);
+        self.write_reg(rd, (self.pc + Wrapping(4)).0);
 
         let target_address = self.read_reg(rs1).wrapping_add(sign_extend32(imm, 12));
-        self.pc = target_address & !1; // Clear the least significant bit
+        self.pc = Wrapping(target_address & !1); // Clear the least significant bit
+    }
+
+    #[inline(always)]
+    fn execute_lui(&mut self, instr: Instruction) {
+        let Instruction::UType { opcode, rd, imm } = instr else {
+            panic!("Expected U-type instruction");
+        };
+
+        // Immediate already ANDed with 0xFFFFF000 in decode
+        // Lower 12 bits are supposed to be zeroed
+        self.write_reg(rd, imm);
+    }
+
+    #[inline(always)]
+    fn execute_auipc(&mut self, instr: Instruction) {
+        let Instruction::UType { opcode, rd, imm } = instr else {
+            panic!("Expected U-type instruction");
+        };
+
+        // Immediate already ANDed with 0xFFFFF000 in decode
+        // Lower 12 bits are supposed to be zeroed
+        let result = self.pc + Wrapping(imm);
+        self.write_reg(rd, result.0);
+    }
+
+    #[inline(always)]
+    fn execute_envops(&mut self, instr: Instruction) {
+        let Instruction::IType {
+            opcode,
+            rd,
+            funct3,
+            rs1,
+            imm,
+        } = instr
+        else {
+            panic!("Expected I-type instruction");
+        };
+
+        match imm {
+            0x000 => {
+                // ECALL
+                warn!("ECALL invoked at PC: {:#X}", self.pc.0);
+            }
+            0x001 => {
+                // EBREAK
+                warn!("EBREAK invoked at PC: {:#X}", self.pc.0);
+            }
+            _ => panic!("Illegal instruction: {:?}", instr),
+        }
     }
 }
 
@@ -677,26 +744,32 @@ impl<'a> Cpu<'a> {
     fn new(regs: &'a mut RegArray, memory: &'a mut AddressSpace) -> Self {
         Cpu {
             regs,
-            pc: 0,
+            pc: Wrapping(0),
             memory,
         }
     }
 
-    fn init(&mut self, entry_point: Option<u32>) {
-        self.pc = entry_point.unwrap_or(INSTR_MEM_BASE);
+    fn init(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
+        self.pc = Wrapping(entry_point.unwrap_or(INSTR_MEM_BASE));
 
         // Initialize the stack pointer to the top of the data memory (growing downwards on RISC-V)
         self.write_reg(Regs::Sp, DATA_MEM_BASE + DATA_MEM_SIZE);
+
+        if let Some(program) = program {
+            // Load the program into instruction memory
+            for (i, &byte) in program.iter().enumerate() {
+                self.memory.write_8(INSTR_MEM_BASE + i as u32, byte);
+            }
+        }
     }
 
     fn step(&mut self) {
-        let raw_instr = self.memory.read_32(self.pc);
+        let raw_instr = self.memory.read_32(self.pc.0);
 
         let instr = self.decode(raw_instr);
         self.execute(instr);
 
-        // Increment the program counter to point to the next instruction - what about branches???
-        self.pc += 4;
+        self.pc += Wrapping(4);
     }
 }
 
@@ -707,3 +780,6 @@ fn sign_extend32(data: u32, size: u32) -> u32 {
     let shamt = 32 - size;
     (((data << shamt) as i32) >> shamt) as u32
 }
+
+#[cfg(test)]
+mod tests;
