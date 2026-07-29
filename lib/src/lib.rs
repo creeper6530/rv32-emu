@@ -28,6 +28,20 @@ pub enum Fault {
     AllZeroInstruction,
     Halt,
 }
+impl core::fmt::Display for Fault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Fault::InvalidMemoryAccess(addr) => {
+                write!(f, "invalid memory access at address: {:#X}", addr)
+            }
+            Fault::UndecodedInstruction(instr) => write!(f, "undecoded instruction: {:#X}", instr),
+            Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),
+            Fault::AllZeroInstruction => write!(f, "all-zero instruction encountered (illegal)"),
+            Fault::Halt => write!(f, "halt instruction encountered"),
+        }
+    }
+}
+impl core::error::Error for Fault {}
 
 // All accesses are little-endian
 #[derive(Debug, Clone, Copy)]
@@ -36,7 +50,7 @@ pub struct AddressSpace {
     data: [u8; DATA_MEM_SIZE as usize],   // 1 KiB of data memory
 }
 impl AddressSpace {
-    fn new() -> Self {
+    pub fn new() -> Self {
         AddressSpace {
             instr: [0; INSTR_MEM_SIZE as usize],
             data: [0; DATA_MEM_SIZE as usize],
