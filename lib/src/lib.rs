@@ -1,23 +1,13 @@
 #![no_std]
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::vec;
 use core::num::Wrapping;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-
-/*
-# MEMORY MAP:
-
-0x1000_0000 - 0x1000_03FF: Instruction memory (1 KiB)
-0x2000_0000 - 0x2000_03FF: Data memory (1 KiB)
-*/
-
-const INSTR_MEM_SIZE: u32 = 1 * 1024; // 1 KiB
-const DATA_MEM_SIZE: u32 = 1 * 1024; // 1 KiB
-const INSTR_MEM_BASE: u32 = 0x1000_0000;
-const DATA_MEM_BASE: u32 = 0x2000_0000;
-const INSTR_MEM_END: u32 = INSTR_MEM_BASE + INSTR_MEM_SIZE;
-const DATA_MEM_END: u32 = DATA_MEM_BASE + DATA_MEM_SIZE;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Fault {
@@ -27,6 +17,7 @@ pub enum Fault {
 
     AllZeroInstruction,
     Halt,
+    MemoryTooSmall,
 }
 impl core::fmt::Display for Fault {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -38,159 +29,222 @@ impl core::fmt::Display for Fault {
             Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),
             Fault::AllZeroInstruction => write!(f, "all-zero instruction encountered (illegal)"),
             Fault::Halt => write!(f, "halt instruction encountered"),
+            Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
         }
     }
 }
 impl core::error::Error for Fault {}
 
-// All accesses are little-endian
-#[derive(Debug, Clone, Copy)]
-pub struct AddressSpace {
-    instr: [u8; INSTR_MEM_SIZE as usize], // 1 KiB of instruction memory
-    data: [u8; DATA_MEM_SIZE as usize],   // 1 KiB of data memory
+/// Struct is only composed of two Boxes, so it shall not be heap-allocated itself.
+///
+/// All accesses are little-endian, and the instruction and data memory regions
+/// are separate and non-overlapping.
+#[derive(Debug, Clone)]
+pub struct AddressSpace<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> {
+    instr: Box<[u8; INSTR_MEM_SIZE]>,
+    data: Box<[u8; DATA_MEM_SIZE]>,
 }
-impl AddressSpace {
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize>
+    AddressSpace<INSTR_MEM_SIZE, DATA_MEM_SIZE>
+{
+    /// Start of instruction memory (0x1000_0000)
+    const INSTR_MEM_BASE: u32 = 0x1000_0000;
+    /// Start of data memory (0x2000_0000)
+    const DATA_MEM_BASE: u32 = 0x2000_0000;
+
+    /// End of instruction memory (non-inclusive)
+    const INSTR_MEM_END: u32 = {
+        assert!(
+            INSTR_MEM_SIZE > 0,
+            "Instruction memory size must be greater than 0"
+        );
+        assert!(
+            (Self::INSTR_MEM_BASE + INSTR_MEM_SIZE as u32) <= Self::DATA_MEM_BASE,
+            "Instruction and data memory must not overlap"
+        );
+        Self::INSTR_MEM_BASE + INSTR_MEM_SIZE as u32
+    };
+
+    /// End of data memory (non-inclusive)
+    const DATA_MEM_END: u32 = {
+        assert!(DATA_MEM_SIZE > 0, "Data memory size must be greater than 0");
+        Self::DATA_MEM_BASE + DATA_MEM_SIZE as u32
+    };
+
     pub fn new() -> Self {
+        // We need this hack because `Box::new([0; N])` first creates a `[0; N]` on the stack
+        // and then moves it to the heap, which still causes a stack overflow for large N.
         AddressSpace {
-            instr: [0; INSTR_MEM_SIZE as usize],
-            data: [0; DATA_MEM_SIZE as usize],
+            instr: vec![0; INSTR_MEM_SIZE]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
+            data: vec![0; DATA_MEM_SIZE]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
         }
+    }
+
+    /// Convenience function to get the associated constant `INSTR_MEM_BASE`.
+    #[inline(always)]
+    pub const fn instr_mem_base(&self) -> u32 {
+        Self::INSTR_MEM_BASE
+    }
+
+    /// Convenience function to get the associated constant `DATA_MEM_BASE`.
+    #[inline(always)]
+    pub const fn data_mem_base(&self) -> u32 {
+        Self::DATA_MEM_BASE
+    }
+
+    /// Convenience function to get the associated constant `INSTR_MEM_END`.
+    #[inline(always)]
+    pub const fn instr_mem_end(&self) -> u32 {
+        Self::INSTR_MEM_END
+    }
+
+    /// Convenience function to get the associated constant `DATA_MEM_END`.
+    #[inline(always)]
+    pub const fn data_mem_end(&self) -> u32 {
+        Self::DATA_MEM_END
     }
 
     #[inline]
     fn read_8(&self, addr: u32) -> Result<u8, Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => Ok(self.instr[(addr - INSTR_MEM_BASE) as usize]),
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => Ok(self.data[(addr - DATA_MEM_BASE) as usize]),
-            _ => {
-                error!("Invalid memory read at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // We can't use generic params in (range) patterns (E0158), so we have to use if instead.
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            Ok(self.instr[(addr - Self::INSTR_MEM_BASE) as usize])
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            Ok(self.data[(addr - Self::DATA_MEM_BASE) as usize])
+        } else {
+            error!("Invalid memory read at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 
     #[inline]
     fn read_16(&self, addr: u32) -> Result<u16, Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => {
-                let index = (addr - INSTR_MEM_BASE) as usize;
-                Ok(u16::from_le_bytes(
-                    *self.instr[index..=index + 1].as_array::<2>().unwrap(),
-                ))
-            }
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => {
-                let index = (addr - DATA_MEM_BASE) as usize;
-                Ok(u16::from_le_bytes(
-                    *self.data[index..=index + 1].as_array::<2>().unwrap(),
-                ))
-            }
-            _ => {
-                error!("Invalid memory read at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            let index = (addr - Self::INSTR_MEM_BASE) as usize;
+            Ok(u16::from_le_bytes([
+                self.instr[index],
+                self.instr[index + 1],
+            ]))
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            let index = (addr - Self::DATA_MEM_BASE) as usize;
+            Ok(u16::from_le_bytes([self.data[index], self.data[index + 1]]))
+        } else {
+            error!("Invalid memory read at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 
     #[inline]
     fn read_32(&self, addr: u32) -> Result<u32, Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => {
-                let index = (addr - INSTR_MEM_BASE) as usize;
-                Ok(u32::from_le_bytes(
-                    *self.instr[index..=index + 3].as_array::<4>().unwrap(),
-                ))
-            }
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => {
-                let index = (addr - DATA_MEM_BASE) as usize;
-                Ok(u32::from_le_bytes(
-                    *self.data[index..=index + 3].as_array::<4>().unwrap(),
-                ))
-            }
-            _ => {
-                error!("Invalid memory read at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            let index = (addr - Self::INSTR_MEM_BASE) as usize;
+            Ok(u32::from_le_bytes([
+                self.instr[index],
+                self.instr[index + 1],
+                self.instr[index + 2],
+                self.instr[index + 3],
+            ]))
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            let index = (addr - Self::DATA_MEM_BASE) as usize;
+            Ok(u32::from_le_bytes([
+                self.data[index],
+                self.data[index + 1],
+                self.data[index + 2],
+                self.data[index + 3],
+            ]))
+        } else {
+            error!("Invalid memory read at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 
     #[inline]
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => {
-                error!(
-                    "Instruction memory is read-only, cannot write to address: {:#X}",
-                    addr
-                );
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => {
-                self.data[(addr - DATA_MEM_BASE) as usize] = value;
-                Ok(())
-            }
-            _ => {
-                error!("Invalid memory write at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            error!(
+                "Instruction memory is read-only, cannot write to address: {:#X}",
+                addr
+            );
+            Err(Fault::InvalidMemoryAccess(addr))
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            self.data[(addr - Self::DATA_MEM_BASE) as usize] = value;
+            Ok(())
+        } else {
+            error!("Invalid memory write at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 
     #[inline]
     fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => {
-                error!(
-                    "Instruction memory is read-only, cannot write to address: {:#X}",
-                    addr
-                );
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => {
-                let index = (addr - DATA_MEM_BASE) as usize;
-                self.data[index..=index + 1].copy_from_slice(&value.to_le_bytes());
-                Ok(())
-            }
-            _ => {
-                error!("Invalid memory write at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            error!(
+                "Instruction memory is read-only, cannot write to address: {:#X}",
+                addr
+            );
+            Err(Fault::InvalidMemoryAccess(addr))
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            let index = (addr - Self::DATA_MEM_BASE) as usize;
+            let bytes = value.to_le_bytes();
+            self.data[index] = bytes[0];
+            self.data[index + 1] = bytes[1];
+            Ok(())
+        } else {
+            error!("Invalid memory write at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 
     #[inline]
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        match addr {
-            // Instruction memory
-            INSTR_MEM_BASE..INSTR_MEM_END => {
-                error!(
-                    "Instruction memory is read-only, cannot write to address: {:#X}",
-                    addr
-                );
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
-            // Data memory
-            DATA_MEM_BASE..DATA_MEM_END => {
-                let index = (addr - DATA_MEM_BASE) as usize;
-                self.data[index..=index + 3].copy_from_slice(&value.to_le_bytes());
-                Ok(())
-            }
-            _ => {
-                error!("Invalid memory write at address: {:#X}", addr);
-                Err(Fault::InvalidMemoryAccess(addr))
-            }
+        // Instruction memory
+        if addr >= Self::INSTR_MEM_BASE && addr < Self::INSTR_MEM_END {
+            error!(
+                "Instruction memory is read-only, cannot write to address: {:#X}",
+                addr
+            );
+            Err(Fault::InvalidMemoryAccess(addr))
+        }
+        // Data memory
+        else if addr >= Self::DATA_MEM_BASE && addr < Self::DATA_MEM_END {
+            let index = (addr - Self::DATA_MEM_BASE) as usize;
+            let bytes = value.to_le_bytes();
+            self.data[index] = bytes[0];
+            self.data[index + 1] = bytes[1];
+            self.data[index + 2] = bytes[2];
+            self.data[index + 3] = bytes[3];
+            Ok(())
+        } else {
+            error!("Invalid memory write at address: {:#X}", addr);
+            Err(Fault::InvalidMemoryAccess(addr))
         }
     }
 }
-impl Default for AddressSpace {
+
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Default
+    for AddressSpace<INSTR_MEM_SIZE, DATA_MEM_SIZE>
+{
     fn default() -> Self {
         Self::new()
     }
@@ -324,14 +378,14 @@ pub enum Instruction {
 }
 
 #[derive(Debug)]
-pub struct Cpu<'a> {
-    regs: &'a mut RegArray,
+pub struct Cpu<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> {
+    regs: RegArray,
     pc: Wrapping<u32>,
     next_pc: Wrapping<u32>,
-    memory: &'a mut AddressSpace,
+    memory: AddressSpace<INSTR_MEM_SIZE, DATA_MEM_SIZE>,
 }
 
-impl<'a> Cpu<'a> {
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Cpu<INSTR_MEM_SIZE, DATA_MEM_SIZE> {
     #[inline]
     fn write_reg(&mut self, reg: Regs, value: u32) {
         if reg != Regs::Zero {
@@ -840,29 +894,44 @@ impl<'a> Cpu<'a> {
     }
 }
 
-impl<'a> Cpu<'a> {
-    pub fn new(regs: &'a mut RegArray, memory: &'a mut AddressSpace) -> Self {
-        Cpu {
-            regs,
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Cpu<INSTR_MEM_SIZE, DATA_MEM_SIZE> {
+    pub fn new() -> Self {
+        let new = Cpu {
+            regs: RegArray::new(),
             pc: Wrapping(0),
             next_pc: Wrapping(0),
-            memory,
-        }
+            memory: AddressSpace::<INSTR_MEM_SIZE, DATA_MEM_SIZE>::new(),
+        };
+
+        // Force compile-time evaluation of the constants to trigger the assertions
+        let _ = new.memory.instr_mem_end();
+        let _ = new.memory.data_mem_end();
+
+        new
     }
 
     /// Meant to be called like `let mut cpu = Cpu::new(...).init(...);`,
     /// not `cpu.init(...)` on an existing instance
-    pub fn reset(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) {
+    pub fn reset(&mut self, entry_point: Option<u32>, program: Option<&[u8]>) -> Result<(), Fault> {
         info!("Resetting CPU");
 
-        self.pc = Wrapping(entry_point.unwrap_or(INSTR_MEM_BASE));
+        self.pc = Wrapping(entry_point.unwrap_or(self.memory.instr_mem_base()));
 
         // Initialize the stack pointer to the top of the data memory (growing downwards on RISC-V)
-        self.write_reg(Regs::Sp, DATA_MEM_END);
+        self.write_reg(Regs::Sp, self.memory.data_mem_end());
 
         if let Some(program) = program {
+            if program.len() > self.memory.instr.len() {
+                error!(
+                    "Program size ({}) exceeds instruction memory size ({})",
+                    program.len(),
+                    self.memory.instr.len()
+                );
+                return Err(Fault::MemoryTooSmall);
+            }
             self.memory.instr[0..program.len()].copy_from_slice(program);
         }
+        Ok(())
     }
 
     pub fn step(&mut self) -> Result<(), Fault> {

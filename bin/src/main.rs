@@ -108,18 +108,18 @@ fn main() -> anyhow::Result<()> {
                 _ => unreachable!(),
             }
 
-            info!("Loaded {} bytes: {:X?}", bytecode.len(), bytecode);
+            info!("Loaded {} bytes", bytecode.len());
+            trace!("Bytecode: {:?}", bytecode);
         }
         FileType::Elf => {
             todo!()
         }
     };
 
-    let mut memory: Box<emu::AddressSpace> = Box::default(); // Store the address space on the heap
-    let mut regs = emu::RegArray::default();
-    let mut cpu = emu::Cpu::new(&mut regs, &mut memory);
+    // Memory is already heap-allocated
+    let mut cpu: emu::Cpu<1024, 1024> = emu::Cpu::new();
 
-    cpu.reset(entry_point, Some(&bytecode));
+    cpu.reset(entry_point, Some(&bytecode))?;
 
     cpu.run()?;
 

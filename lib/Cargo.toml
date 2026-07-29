@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 log = "0.4.33"
+
+#[features]
+#default = ["alloc"]
+#alloc = []

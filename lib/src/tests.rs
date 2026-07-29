@@ -14,14 +14,11 @@ fn sign_extend_test() {
 
 #[test]
 fn initialization_test() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
+    cpu.reset(None, Some(&[0x00, 0x00, 0x00, 0x00])).unwrap(); // We don't intend to execute this!
 
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(&[0x00, 0x00, 0x00, 0x00])); // We don't intend to execute this!
-
-    assert_eq!(cpu.pc, Wrapping(INSTR_MEM_BASE));
-    assert_eq!(cpu.read_reg(Regs::Sp), DATA_MEM_END);
+    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base()));
+    assert_eq!(cpu.read_reg(Regs::Sp), cpu.memory.data_mem_end());
 }
 
 const PROGRAM_NOP: [u8; 4] = [
@@ -30,11 +27,8 @@ const PROGRAM_NOP: [u8; 4] = [
 
 #[test]
 fn program_nop() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(&PROGRAM_NOP));
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
+    cpu.reset(None, Some(&PROGRAM_NOP)).unwrap();
 
     cpu.step().unwrap();
 }
@@ -45,11 +39,8 @@ const PROGRAM_ADDI: [u8; 4] = [
 
 #[test]
 fn program_addi() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(&PROGRAM_ADDI));
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
+    cpu.reset(None, Some(&PROGRAM_ADDI)).unwrap();
 
     cpu.step().unwrap();
 
@@ -68,11 +59,8 @@ const PROGRAM_MEMWRITE: [u8; 16] = [
 
 #[test]
 fn program_memwrite() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(&PROGRAM_MEMWRITE));
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
+    cpu.reset(None, Some(&PROGRAM_MEMWRITE)).unwrap();
 
     cpu.step().unwrap();
     cpu.step().unwrap();
@@ -80,19 +68,17 @@ fn program_memwrite() {
     cpu.step().unwrap();
 
     assert_eq!(cpu.memory.read_32(0x2000_0000).unwrap(), 0x46A98);
-    assert_eq!(cpu.pc, Wrapping(INSTR_MEM_BASE + 16));
+    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base() + 16));
 }
 
 #[test]
 fn program_c_memwrite() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
     cpu.reset(
         None,
         Some(include_bytes!("../../c_test_progs/memwrite.bin")),
-    );
+    )
+    .unwrap();
 
     cpu.run().unwrap();
 
@@ -101,14 +87,12 @@ fn program_c_memwrite() {
 
 #[test]
 fn program_c_functioncall() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
     cpu.reset(
         None,
         Some(include_bytes!("../../c_test_progs/functioncall.bin")),
-    );
+    )
+    .unwrap();
 
     cpu.step().unwrap();
     cpu.step().unwrap();
@@ -118,7 +102,7 @@ fn program_c_functioncall() {
     cpu.step().unwrap();
     // Execute up until the `jal`, then check that the PC landed at the correct address
     // To be edited when `functioncall.c` is changed`
-    assert_eq!(cpu.pc, Wrapping(INSTR_MEM_BASE + 0x28));
+    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base() + 0x28));
 
     cpu.run().unwrap();
 
@@ -127,19 +111,22 @@ fn program_c_functioncall() {
 
 #[test]
 fn program_c_branch() {
-    let mut memory = AddressSpace::new();
-    let mut regs = RegArray::new();
-
-    let mut cpu = Cpu::new(&mut regs, &mut memory);
-    cpu.reset(None, Some(include_bytes!("../../c_test_progs/branch.bin")));
+    let mut cpu: Cpu<1024, 1024> = Cpu::new();
+    cpu.reset(None, Some(include_bytes!("../../c_test_progs/branch.bin")))
+        .unwrap();
 
     cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
     cpu.run().unwrap();
     assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 123);
 
-    cpu.reset(None, None); // No need to reload the program
+    cpu.reset(None, None).unwrap(); // No need to reload the program
 
     cpu.memory.write_32(0x2000_00FF, 777).unwrap(); // Odd number
     cpu.run().unwrap();
     assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 456);
+}
+
+#[test]
+fn maximum_size_memory() {
+    let _cpu: Cpu<0x10000000, 0x10000000> = Cpu::new();
 }
