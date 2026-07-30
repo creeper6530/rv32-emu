@@ -1,0 +1,58 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug executable 'rv32-emu-bin' - memwrite.bin",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=rv32-emu-bin",
+                    "--package=rv32-emu-bin"
+                ]
+            },
+            "args": ["${workspaceFolder}/c_test_progs/memwrite.bin"],
+        },
+    
+        {
+            "name": "Debug unit tests in library 'rv32_emu_lib'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--package=rv32-emu-lib"
+                ]
+            }
+        },
+        {
+            "name": "Debug executable 'rv32-emu-bin'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "run",
+                    "--bin=rv32-emu-bin",
+                    "--package=rv32-emu-bin"
+                ]
+            },
+            "args": []
+        },
+        {
+            "name": "Debug unit tests in executable 'rv32-emu-bin'",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--bin=rv32-emu-bin",
+                    "--package=rv32-emu-bin"
+                ]
+            }
+        }
+    ]
+}

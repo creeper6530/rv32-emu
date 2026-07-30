@@ -130,12 +130,7 @@ fn main() -> anyhow::Result<()> {
     cpu.reset(entry_point)?;
     cpu.run()?;
 
-    // RAII should take care of this
-    /*file.unlock()
-    .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
-    drop(file); // Close file*/
-
-    println!("{:#X?}", cpu);
-
+    println!("{:X?}", cpu);
     Ok(())
+    // From `man 1 flock`: a lock is automatically dropped when the file is closed.
 }
