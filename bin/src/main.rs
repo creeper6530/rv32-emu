@@ -6,27 +6,72 @@ use anyhow::{Context, Ok};
 use clap::Parser;
 use rv32_emu_lib as emu;
 
-use env_logger::{Builder, Env};
 #[allow(unused_imports)]
 use log::{LevelFilter, debug, error, info, trace, warn};
 
+// --------------------------------------------------
+
+// Levels ordered from least to most verbose.
+const LOG_LEVELS_ARRAY: [LevelFilter; 6] = [
+    LevelFilter::Off,
+    LevelFilter::Error,
+    LevelFilter::Warn,
+    LevelFilter::Info,
+    LevelFilter::Debug,
+    LevelFilter::Trace,
+];
+const DEFAULT_LOG_LEVEL_INDEX: usize = 2; // Index of LevelFilter::Warn in LOG_LEVELS_ARRAY
+const DEFAULT_LOG_LEVEL: LevelFilter = LOG_LEVELS_ARRAY[DEFAULT_LOG_LEVEL_INDEX]; // Warn
+
+// --------------------------------------------------
+
+fn hex_parser(s: &str) -> Result<u32, core::num::ParseIntError> {
+    let s = s.trim_start_matches("0x").replace("_", "");
+    u32::from_str_radix(&s, 16)
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about = "RISC-V 32bit Emulator", long_about = None)]
+#[command(group(
+    clap::ArgGroup::new("log_verbosity")
+        .args(["log_level", "verbose", "quiet"])
+        .multiple(false)
+))]
 struct Cli {
     /// Path to the RISC-V executable file to run
     file: PathBuf, // Positional
 
-    /// Override file type (default: auto-detect)
+    /// Override file type
     ///
     /// Note that the HEX file type is expected to be a string of hex digits,
     /// and will have its bytes reversed in 4-byte chunks to match the little-endian representation
     /// (e.g., "0x20000537 0x0ff52583" will be stored as [37, 5, 0, 20, 83, 25, F5, F]).
+    ///
+    /// [default: auto-detect]
     #[clap(short, long, verbatim_doc_comment)]
     filetype: Option<FileType>,
 
-    /// Override the entry point in hexadecimal (default: auto-detect from ELF header, or start of file for HEX/BIN)
-    #[clap(short, long)]
-    entry_point: Option<String>,
+    /// Override the entry point in hexadecimal
+    ///
+    /// Prefix "0x" and underscores are allowed (e.g., 0x1000_0000).
+    ///
+    /// [default: auto-detect from ELF header, or start of file for HEX/BIN]
+    #[clap(short, long, value_parser = hex_parser)]
+    entry_point: Option<u32>,
+
+    /// Set the log level
+    ///
+    /// Mutually exclusive with --verbose and --quiet
+    #[clap(short, long, default_value_t = DEFAULT_LOG_LEVEL)]
+    log_level: LevelFilter,
+
+    /// Increase verbosity (can be used multiple times)
+    #[clap(short, long, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Decrease verbosity (can be used multiple times)
+    #[clap(short, long, action = clap::ArgAction::Count)]
+    quiet: u8,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -36,23 +81,35 @@ enum FileType {
     Bin,
 }
 
-fn main() -> anyhow::Result<()> {
-    // Override the default log level to "info" if not set in the environment
-    Builder::from_env(Env::default().default_filter_or("info")).init();
+// --------------------------------------------------
 
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let entry_point: Option<u32> = cli.entry_point.map(|ep| {
-        // Cannot replace undesired underscores in place
-        let trim_ep = ep.trim().trim_start_matches("0x").replace("_", "");
+    // Will not read environment variables, only CLI arguments
+    let mut builder = env_logger::Builder::new();
+    match (cli.verbose, cli.quiet) {
+        (0, 0) => {
+            builder.filter_level(cli.log_level);
+        }
+        (v, 0) if v > 0 => {
+            // Make more verbose by moving towards Trace
+            let log_level_index = std::cmp::min(
+                5, // Index of LevelFilter::Trace in LOG_LEVELS_ARRAY
+                DEFAULT_LOG_LEVEL_INDEX + (v as usize),
+            );
+            builder.filter_level(LOG_LEVELS_ARRAY[log_level_index]);
+        }
+        (0, q) if q > 0 => {
+            // Make quieter by moving towards Off
+            let log_level_index = DEFAULT_LOG_LEVEL_INDEX.saturating_sub(q as usize);
+            builder.filter_level(LOG_LEVELS_ARRAY[log_level_index]);
+        }
+        _ => unreachable!("Cannot have both verbose and quiet flags set"),
+    }
+    builder.init();
 
-        u32::from_str_radix(&trim_ep, 16).unwrap_or_else(|_| {
-            error!("Error: Invalid entry point format. Please provide a valid hexadecimal value (e.g., 0x10000000).");
-            std::process::exit(1);
-        })
-    });
-
-    match entry_point {
+    match cli.entry_point {
         Some(ep) => info!("Using entry point: {:#08X}", ep),
         None => info!("No entry point specified, will auto-decide from file"),
     }
@@ -124,20 +181,17 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Cpu accepts a mutable reference to any AddressSpace implementation,
-    // so we can dereference the Box and borrow the underlying trait object.
+    // so we dereference the Box and borrow the underlying trait object.
     let mut cpu = emu::Cpu::new(&mut (*memory));
 
-    cpu.reset(entry_point)?;
+    cpu.reset(cli.entry_point)?;
     cpu.run()?;
 
-    println!("{:X?}", cpu);
-    // From `man 1 flock`: a lock is automatically dropped when the file is closed...
-    // ...but from [https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex]:
-    // If a process terminates with a portion of a file locked or closes a file that has outstanding locks,
-    // the locks are unlocked by the operating system. However, the time it takes for the operating system
-    // to unlock these locks depends upon available system resources. Therefore, it is recommended
-    // that your process explicitly unlock all files (...) when it terminates.
+    debug!("{:X?}", cpu);
 
+    // Both Unix and Windows unlock the file when it is closed,
+    // but Windows recommends explicitly unlocking it first,
+    // because it could take a while for the OS to release the lock after us.
     file.unlock()
         .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
     Ok(())
