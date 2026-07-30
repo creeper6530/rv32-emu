@@ -131,6 +131,14 @@ fn main() -> anyhow::Result<()> {
     cpu.run()?;
 
     println!("{:X?}", cpu);
+    // From `man 1 flock`: a lock is automatically dropped when the file is closed...
+    // ...but from [https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex]:
+    // If a process terminates with a portion of a file locked or closes a file that has outstanding locks,
+    // the locks are unlocked by the operating system. However, the time it takes for the operating system
+    // to unlock these locks depends upon available system resources. Therefore, it is recommended
+    // that your process explicitly unlock all files (...) when it terminates.
+
+    file.unlock()
+        .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
     Ok(())
-    // From `man 1 flock`: a lock is automatically dropped when the file is closed.
 }
