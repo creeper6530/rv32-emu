@@ -130,7 +130,7 @@ fn program_c_branch() {
 }
 
 #[test]
-fn program_c_memwrite_memmap() {
+fn memmap_program_c_memwrite() {
     // Working directory of tests is the root directory of the package
     // https://doc.rust-lang.org/cargo/commands/cargo-test.html#working-directory-of-tests
     let file = std::fs::File::open("../c_test_progs/memwrite.bin").expect("Failed to open file!");
@@ -148,6 +148,19 @@ fn program_c_memwrite_memmap() {
 
     // Technically should be handled by RAII, but just to be sure.
     file.unlock().expect("Failed to unlock file!");
+}
+
+#[test]
+fn memmap_fileless_program_c_memwrite() {
+    let memory =
+        MemmapMemory::new_fileless(include_bytes!("../../c_test_progs/memwrite.bin"), 2048)
+            .unwrap();
+
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
+
+    cpu.run().unwrap();
+    assert_eq!(cpu.memory.read_32(0x2000_0040).unwrap(), 0x101);
 }
 
 #[test]

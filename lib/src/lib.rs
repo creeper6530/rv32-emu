@@ -8,6 +8,8 @@ use log::{debug, error, info, trace, warn};
 mod memory;
 pub use memory::*;
 
+// --------------------------------------------------
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Fault {
     InvalidMemoryAccess(u32),
@@ -20,6 +22,7 @@ pub enum Fault {
     MemoryTooSmall,
     IOError,
 }
+
 impl core::fmt::Display for Fault {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -45,6 +48,8 @@ impl From<std::io::Error> for Fault {
         Fault::IOError
     }
 }
+
+// --------------------------------------------------
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RegArray([u32; 32]);
@@ -130,6 +135,8 @@ impl From<u8> for Regs {
     }
 }
 
+// --------------------------------------------------
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Instruction {
     RType {
@@ -172,6 +179,8 @@ pub enum Instruction {
         imm: u32,
     },
 }
+
+// --------------------------------------------------
 
 #[derive(Debug)]
 pub struct Cpu<T: AddressSpace> {
@@ -749,6 +758,8 @@ impl<T: AddressSpace> Cpu<T> {
         }
     }
 }
+
+// --------------------------------------------------
 
 // Stolen from `binutils` crate under MIT license
 #[inline]

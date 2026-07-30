@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     });
 
     match entry_point {
-        Some(ep) => info!("Using entry point: 0x{:08X}", ep),
+        Some(ep) => info!("Using entry point: {:#08X}", ep),
         None => info!("No entry point specified, will auto-decide from file"),
     }
 
@@ -76,62 +76,65 @@ fn main() -> anyhow::Result<()> {
     // Bytecode to be loaded into the emulator's memory.
     let mut bytecode: Vec<u8>;
 
-    {
-        let mut file = File::open(cli.file.as_path())
-            .with_context(|| format!("Failed to open executable file: {}", cli.file.display()))?;
+    let mut file = File::open(cli.file.as_path())
+        .with_context(|| format!("Failed to open executable file: {}", cli.file.display()))?;
+    file.lock_shared().with_context(|| {
+        format!(
+            "Failed to acquire shared lock on executable file: {}",
+            cli.file.display()
+        )
+    })?;
 
-        match filetype {
-            FileType::Hex | FileType::Bin => {
-                let mut reader = std::io::BufReader::new(file);
+    let memory: Box<dyn emu::AddressSpace>;
 
-                match filetype {
-                    FileType::Hex => {
-                        let mut hex_string =
-                            String::with_capacity(reader.get_ref().metadata()?.len() as usize);
+    match filetype {
+        FileType::Hex => {
+            let mut reader = std::io::BufReader::new(file);
 
-                        reader.read_to_string(&mut hex_string)?;
-                        bytecode = hex::decode(
-                            hex_string
-                                .replace("0x", "")
-                                .chars()
-                                .filter(|c| c.is_ascii_hexdigit())
-                                .collect::<String>(),
-                        )?;
+            let mut hex_string = String::with_capacity(reader.get_ref().metadata()?.len() as usize);
 
-                        bytecode.chunks_mut(4).for_each(|chunk| {
-                            chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
-                        });
-                    }
-                    FileType::Bin => {
-                        bytecode = Vec::with_capacity(reader.get_ref().metadata()?.len() as usize);
-                        reader.read_to_end(&mut bytecode)?;
-                    }
-                    _ => unreachable!(),
-                }
+            reader.read_to_string(&mut hex_string)?;
+            bytecode = hex::decode(
+                hex_string
+                    .replace("0x", "")
+                    .chars()
+                    .filter(|c| c.is_ascii_hexdigit())
+                    .collect::<String>(),
+            )?;
 
-                info!("Loaded {} bytes", bytecode.len());
-                trace!("Bytecode: {:?}", bytecode);
+            bytecode.chunks_mut(4).for_each(|chunk| {
+                chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
+            });
 
-                file = reader.into_inner(); // Reclaim ownership of the File
-            }
-            FileType::Elf => {
-                todo!()
-            }
-        };
+            memory = Box::new(emu::BoxedMemory::<1024, 1024>::new(Some(&bytecode))?);
 
-        // Memory is already heap-allocated
-        let memory: emu::BoxedMemory<1024, 1024> = emu::BoxedMemory::new(Some(&bytecode))?;
-        let mut cpu = emu::Cpu::new(memory);
+            info!("Loaded {0:#X} ({0}) bytes", bytecode.len());
+            trace!("Bytecode: {:?}", bytecode);
 
-        cpu.reset(entry_point)?;
+            file = reader.into_inner(); // Reclaim ownership of the File
+        }
+        FileType::Bin => {
+            memory = Box::new(unsafe { emu::MemmapMemory::new(&file, 1024 * 1024)? });
 
-        cpu.run()?;
+            info!("Memory-mapped {0:#X} ({0}) bytes", file.metadata()?.len());
+        }
+        FileType::Elf => {
+            todo!()
+        }
+    };
 
-        // RAII should take care of this
-        /*file.unlock()
-        .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
-        drop(file); // Close file*/
-    }
+    let mut cpu = emu::Cpu::new(memory);
+
+    cpu.reset(entry_point)?;
+
+    cpu.run()?;
+
+    // RAII should take care of this
+    /*file.unlock()
+    .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
+    drop(file); // Close file*/
+
+    println!("{:#X?}", cpu);
 
     Ok(())
 }

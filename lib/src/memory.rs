@@ -11,6 +11,7 @@ use memmap2::{Advice, MmapOptions};
 use std::fs::File;
 
 use crate::Fault;
+use core::fmt::Debug;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
@@ -38,13 +39,75 @@ pub trait AddressSpace {
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>;
 }
 
+// Implements for `Box<dyn AddressSpace>` and `&mut dyn AddressSpace`
+// This allows `Cpu` to accept a dynamically-dispatched memory implementation
+// (for example when we don't know at compile time which implementation we want)
+impl<T: core::ops::DerefMut<Target = dyn AddressSpace>> AddressSpace for T {
+    // Just one dereference would create infinite recursion, so we always need to dereference twice.
+
+    #[inline(always)]
+    fn instr_mem_base(&self) -> u32 {
+        (**self).instr_mem_base()
+    }
+    #[inline(always)]
+    fn data_mem_base(&self) -> u32 {
+        (**self).data_mem_base()
+    }
+    #[inline(always)]
+    fn instr_mem_end(&self) -> u32 {
+        (**self).instr_mem_end()
+    }
+    #[inline(always)]
+    fn data_mem_end(&self) -> u32 {
+        (**self).data_mem_end()
+    }
+
+    #[inline]
+    fn read_8(&self, addr: u32) -> Result<u8, Fault> {
+        (**self).read_8(addr)
+    }
+    #[inline]
+    fn read_16(&self, addr: u32) -> Result<u16, Fault> {
+        (**self).read_16(addr)
+    }
+    #[inline]
+    fn read_32(&self, addr: u32) -> Result<u32, Fault> {
+        (**self).read_32(addr)
+    }
+    #[inline]
+    fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
+        (**self).write_8(addr, value)
+    }
+    #[inline]
+    fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
+        (**self).write_16(addr, value)
+    }
+    #[inline]
+    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
+        (**self).write_32(addr, value)
+    }
+}
+
+impl Debug for dyn AddressSpace {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "dyn AddressSpace {{ instr_mem_base: {:#X}, data_mem_base: {:#X}, instr_mem_end: {:#X}, data_mem_end: {:#X} }}",
+            self.instr_mem_base(),
+            self.data_mem_base(),
+            self.instr_mem_end(),
+            self.data_mem_end()
+        )
+    }
+}
+
 // --------------------------------------------------
 
 /// Struct is only composed of two Boxes, so it shall not be heap-allocated itself.
 ///
 /// In this implementation instruction and data memory do not overlap.
 #[cfg(feature = "alloc")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BoxedMemory<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> {
     instr: Box<[u8; INSTR_MEM_SIZE]>,
     data: Box<[u8; DATA_MEM_SIZE]>,
@@ -110,17 +173,14 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> AddressSpace
     fn instr_mem_base(&self) -> u32 {
         Self::INSTR_MEM_BASE
     }
-    /// Convenience method returning the start of data memory associated constant.
     #[inline(always)]
     fn data_mem_base(&self) -> u32 {
         Self::DATA_MEM_BASE
     }
-    /// Convenience method returning the end of instruction memory associated constant.
     #[inline(always)]
     fn instr_mem_end(&self) -> u32 {
         Self::INSTR_MEM_END
     }
-    /// Convenience method returning the end of data memory associated constant.
     #[inline(always)]
     fn data_mem_end(&self) -> u32 {
         Self::DATA_MEM_END
@@ -267,11 +327,29 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Default
     }
 }
 
+// Deriving Debug for BoxedMemory would cause a stack overflow upon attempting to format it,
+// so we implement Debug manually to avoid printing the entire memory contents.
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Debug
+    for BoxedMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "BoxedMemory {{ instr_mem_base: {:#X}, data_mem_base: {:#X}, instr_mem_end: {:#X}, data_mem_end: {:#X} }}",
+            self.instr_mem_base(),
+            self.data_mem_base(),
+            self.instr_mem_end(),
+            self.data_mem_end()
+        )
+    }
+}
+
 // --------------------------------------------------
 
 /// Near clone of `BoxedMemory`, but uses arrays instead of heap-allocated boxes.
 ///
 /// In this implementation instruction and data memory do not overlap.
+#[derive(Clone, Copy)]
 pub struct ArrayMemory<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> {
     instr: [u8; INSTR_MEM_SIZE],
     data: [u8; DATA_MEM_SIZE],
@@ -327,17 +405,14 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> AddressSpace
     fn instr_mem_base(&self) -> u32 {
         Self::INSTR_MEM_BASE
     }
-    /// Convenience method returning the start of data memory associated constant.
     #[inline(always)]
     fn data_mem_base(&self) -> u32 {
         Self::DATA_MEM_BASE
     }
-    /// Convenience method returning the end of instruction memory associated constant.
     #[inline(always)]
     fn instr_mem_end(&self) -> u32 {
         Self::INSTR_MEM_END
     }
-    /// Convenience method returning the end of data memory associated constant.
     #[inline(always)]
     fn data_mem_end(&self) -> u32 {
         Self::DATA_MEM_END
@@ -475,9 +550,28 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> AddressSpace
     }
 }
 
-impl Default for ArrayMemory<1024, 1024> {
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Default
+    for ArrayMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
+{
     fn default() -> Self {
         Self::new(None).expect("None should not lead to errors!")
+    }
+}
+
+// Technically the ArrayMemory struct is already Debug, since it's relatively small
+// and should fit on the stack, but we maintain consistency.
+impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Debug
+    for ArrayMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "ArrayMemory {{ instr_mem_base: {:#X}, data_mem_base: {:#X}, instr_mem_end: {:#X}, data_mem_end: {:#X} }}",
+            self.instr_mem_base(),
+            self.data_mem_base(),
+            self.instr_mem_end(),
+            self.data_mem_end()
+        )
     }
 }
 
@@ -527,6 +621,30 @@ impl MemmapMemory {
             data: data_mmap,
         })
     }
+
+    pub fn new_fileless(program: &[u8], mem_size: usize) -> Result<Self, Fault> {
+        let mut instr_mmap = MmapOptions::new().len(program.len()).map_anon()?;
+        #[cfg(target_os = "linux")]
+        instr_mmap.advise(Advice::HugePage).unwrap_or_else(|e| {
+            warn!("Failed to advise huge pages for instruction memory: {}", e);
+        });
+        instr_mmap.copy_from_slice(program);
+
+        let data_mmap = MmapOptions::new().len(mem_size).map_anon()?;
+        #[cfg(target_os = "linux")]
+        data_mmap.advise(Advice::HugePage).unwrap_or_else(|e| {
+            warn!("Failed to advise huge pages for data memory: {}", e);
+        });
+        #[cfg(target_os = "linux")]
+        data_mmap.advise(Advice::Random).unwrap_or_else(|e| {
+            warn!("Failed to advise random access for data memory: {}", e);
+        });
+
+        Ok(Self {
+            instr: instr_mmap.make_read_only()?,
+            data: data_mmap,
+        })
+    }
 }
 
 impl AddressSpace for MemmapMemory {
@@ -534,17 +652,14 @@ impl AddressSpace for MemmapMemory {
     fn instr_mem_base(&self) -> u32 {
         Self::INSTR_MEM_BASE
     }
-    /// Convenience method returning the start of data memory associated constant.
     #[inline(always)]
     fn data_mem_base(&self) -> u32 {
         Self::DATA_MEM_BASE
     }
-    /// Convenience method returning the end of instruction memory associated constant.
     #[inline(always)]
     fn instr_mem_end(&self) -> u32 {
         Self::INSTR_MEM_BASE + self.instr.len() as u32
     }
-    /// Convenience method returning the end of data memory associated constant.
     #[inline(always)]
     fn data_mem_end(&self) -> u32 {
         Self::DATA_MEM_BASE + self.data.len() as u32
@@ -679,6 +794,19 @@ impl AddressSpace for MemmapMemory {
             error!("Invalid memory write at address: {:#X}", addr);
             Err(Fault::InvalidMemoryAccess(addr))
         }
+    }
+}
+
+impl Debug for MemmapMemory {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "MemmapMemory {{ instr_mem_base: {:#X}, data_mem_base: {:#X}, instr_mem_end: {:#X}, data_mem_end: {:#X} }}",
+            self.instr_mem_base(),
+            self.data_mem_base(),
+            self.instr_mem_end(),
+            self.data_mem_end()
+        )
     }
 }
 
