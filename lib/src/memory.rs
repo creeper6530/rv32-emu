@@ -1,8 +1,11 @@
+#[cfg(feature = "alloc")]
 extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
+use alloc::vec;
 
 use crate::Fault;
-use alloc::boxed::Box;
-use alloc::vec;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
@@ -56,12 +59,14 @@ pub trait AddressSpace {
 /// Struct is only composed of two Boxes, so it shall not be heap-allocated itself.
 ///
 /// In this implementation instruction and data memory do not overlap.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct BoxedMemory<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> {
     pub(crate) instr: Box<[u8; INSTR_MEM_SIZE]>,
     pub(crate) data: Box<[u8; DATA_MEM_SIZE]>,
 }
 
+#[cfg(feature = "alloc")]
 impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize>
     BoxedMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
 {
@@ -95,6 +100,7 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize>
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> AddressSpace
     for BoxedMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
 {
@@ -248,6 +254,7 @@ impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> AddressSpace
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<const INSTR_MEM_SIZE: usize, const DATA_MEM_SIZE: usize> Default
     for BoxedMemory<INSTR_MEM_SIZE, DATA_MEM_SIZE>
 {

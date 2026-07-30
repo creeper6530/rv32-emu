@@ -6,6 +6,10 @@ edition = "2024"
 [dependencies]
 log = "0.4.33"
 
-#[features]
+[features]
 #default = ["alloc"]
-#alloc = []
+alloc = []
+
+# Enable the `alloc` feature for tests
+[dev-dependencies]
+rv32-emu-lib = { path = ".", features = ["alloc"] }
