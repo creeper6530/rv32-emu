@@ -1,4 +1,5 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use core::num::Wrapping;
 #[allow(unused_imports)]
@@ -15,7 +16,9 @@ pub enum Fault {
 
     AllZeroInstruction,
     Halt,
+
     MemoryTooSmall,
+    IOError,
 }
 impl core::fmt::Display for Fault {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -25,13 +28,23 @@ impl core::fmt::Display for Fault {
             }
             Fault::UndecodedInstruction(instr) => write!(f, "undecoded instruction: {:#X}", instr),
             Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),
+
             Fault::AllZeroInstruction => write!(f, "all-zero instruction encountered (illegal)"),
-            Fault::Halt => write!(f, "halt instruction encountered"),
+            Fault::Halt => write!(f, "EBREAK instruction encountered"),
+
             Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
+            Fault::IOError => write!(f, "I/O error occurred"),
         }
     }
 }
 impl core::error::Error for Fault {}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Fault {
+    fn from(_: std::io::Error) -> Self {
+        Fault::IOError
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RegArray([u32; 32]);

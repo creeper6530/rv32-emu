@@ -9,4 +9,4 @@ clap = { version = "4.6.4", features = ["derive"] }
 env_logger = "0.11.11"
 hex = { version = "0.4.3", features = ["alloc"] }
 log = "0.4.33"
-rv32-emu-lib = { path = "../lib", features = ["alloc"] }
+rv32-emu-lib = { path = "../lib", features = ["alloc", "memmap2"] }

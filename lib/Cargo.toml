@@ -5,11 +5,14 @@ edition = "2024"
 
 [dependencies]
 log = "0.4.33"
+memmap2 = { version = "0.9.11", optional = true }
 
 [features]
 #default = ["alloc"]
 alloc = []
+std = ["alloc"]
+memmap2 = ["dep:memmap2", "std"]
 
 # Enable the `alloc` feature for tests
 [dev-dependencies]
-rv32-emu-lib = { path = ".", features = ["alloc"] }
+rv32-emu-lib = { path = ".", features = ["alloc", "std", "memmap2"] }

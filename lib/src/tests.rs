@@ -130,6 +130,31 @@ fn program_c_branch() {
 }
 
 #[test]
-fn maximum_size_memory() {
-    let _memory: BoxedMemory<0x10000000, 0x10000000> = BoxedMemory::new(None).unwrap();
+fn program_c_memwrite_memmap() {
+    // Working directory of tests is the root directory of the package
+    // https://doc.rust-lang.org/cargo/commands/cargo-test.html#working-directory-of-tests
+    let file = std::fs::File::open("../c_test_progs/memwrite.bin").expect("Failed to open file!");
+    file.lock_shared().expect("Failed to lock file!");
+
+    // SAFETY: If underlying file is any way modified while the memory mapping is in use,
+    // we risk UB. Shared locking attempts to prevent this, but it is not guaranteed to work on all platforms.
+    let memory = unsafe { MemmapMemory::new(&file, 2048) }.expect("Failed to open memory mapping!");
+
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
+
+    cpu.run().unwrap();
+    assert_eq!(cpu.memory.read_32(0x2000_0040).unwrap(), 0x101);
+
+    // Technically should be handled by RAII, but just to be sure.
+    file.unlock().expect("Failed to unlock file!");
+}
+
+#[test]
+fn instantiate_memory() {
+    // True maximum size that does not overlap.
+    let _heap_memory: BoxedMemory<0x10000000, 0x10000000> = BoxedMemory::new(None).unwrap();
+
+    // Needs to be smaller not to exceed the stack size limit of the test runner, maximum size of which is unknown.
+    let _array_memory: ArrayMemory<0x200, 0x200> = ArrayMemory::new(None).unwrap();
 }

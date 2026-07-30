@@ -76,53 +76,62 @@ fn main() -> anyhow::Result<()> {
     // Bytecode to be loaded into the emulator's memory.
     let mut bytecode: Vec<u8>;
 
-    match filetype {
-        FileType::Hex | FileType::Bin => {
-            let file = File::open(cli.file.as_path()).with_context(|| {
-                format!("Failed to open executable file: {}", cli.file.display())
-            })?;
-            let mut reader = std::io::BufReader::new(file);
+    {
+        let mut file = File::open(cli.file.as_path())
+            .with_context(|| format!("Failed to open executable file: {}", cli.file.display()))?;
 
-            match filetype {
-                FileType::Hex => {
-                    let mut hex_string =
-                        String::with_capacity(reader.get_ref().metadata()?.len() as usize);
+        match filetype {
+            FileType::Hex | FileType::Bin => {
+                let mut reader = std::io::BufReader::new(file);
 
-                    reader.read_to_string(&mut hex_string)?;
-                    bytecode = hex::decode(
-                        hex_string
-                            .replace("0x", "")
-                            .chars()
-                            .filter(|c| c.is_ascii_hexdigit())
-                            .collect::<String>(),
-                    )?;
+                match filetype {
+                    FileType::Hex => {
+                        let mut hex_string =
+                            String::with_capacity(reader.get_ref().metadata()?.len() as usize);
 
-                    bytecode.chunks_mut(4).for_each(|chunk| {
-                        chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
-                    });
+                        reader.read_to_string(&mut hex_string)?;
+                        bytecode = hex::decode(
+                            hex_string
+                                .replace("0x", "")
+                                .chars()
+                                .filter(|c| c.is_ascii_hexdigit())
+                                .collect::<String>(),
+                        )?;
+
+                        bytecode.chunks_mut(4).for_each(|chunk| {
+                            chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
+                        });
+                    }
+                    FileType::Bin => {
+                        bytecode = Vec::with_capacity(reader.get_ref().metadata()?.len() as usize);
+                        reader.read_to_end(&mut bytecode)?;
+                    }
+                    _ => unreachable!(),
                 }
-                FileType::Bin => {
-                    bytecode = Vec::with_capacity(reader.get_ref().metadata()?.len() as usize);
-                    reader.read_to_end(&mut bytecode)?;
-                }
-                _ => unreachable!(),
+
+                info!("Loaded {} bytes", bytecode.len());
+                trace!("Bytecode: {:?}", bytecode);
+
+                file = reader.into_inner(); // Reclaim ownership of the File
             }
+            FileType::Elf => {
+                todo!()
+            }
+        };
 
-            info!("Loaded {} bytes", bytecode.len());
-            trace!("Bytecode: {:?}", bytecode);
-        }
-        FileType::Elf => {
-            todo!()
-        }
-    };
+        // Memory is already heap-allocated
+        let memory: emu::BoxedMemory<1024, 1024> = emu::BoxedMemory::new(Some(&bytecode))?;
+        let mut cpu = emu::Cpu::new(memory);
 
-    // Memory is already heap-allocated
-    let memory: emu::BoxedMemory<1024, 1024> = emu::BoxedMemory::new(Some(&bytecode))?;
-    let mut cpu = emu::Cpu::new(memory);
+        cpu.reset(entry_point)?;
 
-    cpu.reset(entry_point)?;
+        cpu.run()?;
 
-    cpu.run()?;
+        // RAII should take care of this
+        /*file.unlock()
+        .with_context(|| format!("Failed to unlock executable file: {}", cli.file.display()))?;
+        drop(file); // Close file*/
+    }
 
     Ok(())
 }
