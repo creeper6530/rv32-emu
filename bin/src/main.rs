@@ -117,9 +117,10 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Memory is already heap-allocated
-    let mut cpu: emu::Cpu<1024, 1024> = emu::Cpu::new();
+    let memory: emu::BoxedMemory<1024, 1024> = emu::BoxedMemory::new(Some(&bytecode))?;
+    let mut cpu = emu::Cpu::new(memory);
 
-    cpu.reset(entry_point, Some(&bytecode))?;
+    cpu.reset(entry_point)?;
 
     cpu.run()?;
 

@@ -14,8 +14,9 @@ fn sign_extend_test() {
 
 #[test]
 fn initialization_test() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(None, Some(&[0x00, 0x00, 0x00, 0x00])).unwrap(); // We don't intend to execute this!
+    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(None).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap(); // We don't intend to execute this!
 
     assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base()));
     assert_eq!(cpu.read_reg(Regs::Sp), cpu.memory.data_mem_end());
@@ -27,8 +28,9 @@ const PROGRAM_NOP: [u8; 4] = [
 
 #[test]
 fn program_nop() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(None, Some(&PROGRAM_NOP)).unwrap();
+    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_NOP)).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
 }
@@ -39,8 +41,9 @@ const PROGRAM_ADDI: [u8; 4] = [
 
 #[test]
 fn program_addi() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(None, Some(&PROGRAM_ADDI)).unwrap();
+    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_ADDI)).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
 
@@ -59,8 +62,9 @@ const PROGRAM_MEMWRITE: [u8; 16] = [
 
 #[test]
 fn program_memwrite() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(None, Some(&PROGRAM_MEMWRITE)).unwrap();
+    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_MEMWRITE)).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
     cpu.step().unwrap();
@@ -73,12 +77,10 @@ fn program_memwrite() {
 
 #[test]
 fn program_c_memwrite() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(
-        None,
-        Some(include_bytes!("../../c_test_progs/memwrite.bin")),
-    )
-    .unwrap();
+    let memory: BoxedMemory<1024, 1024> =
+        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/memwrite.bin")[..])).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.run().unwrap();
 
@@ -87,12 +89,12 @@ fn program_c_memwrite() {
 
 #[test]
 fn program_c_functioncall() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(
-        None,
-        Some(include_bytes!("../../c_test_progs/functioncall.bin")),
-    )
+    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(
+        &include_bytes!("../../c_test_progs/functioncall.bin")[..],
+    ))
     .unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
     cpu.step().unwrap();
@@ -111,15 +113,16 @@ fn program_c_functioncall() {
 
 #[test]
 fn program_c_branch() {
-    let mut cpu: Cpu<1024, 1024> = Cpu::new();
-    cpu.reset(None, Some(include_bytes!("../../c_test_progs/branch.bin")))
-        .unwrap();
+    let memory: BoxedMemory<1024, 1024> =
+        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/branch.bin")[..])).unwrap();
+    let mut cpu = Cpu::new(memory);
+    cpu.reset(None).unwrap();
 
     cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
     cpu.run().unwrap();
     assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 123);
 
-    cpu.reset(None, None).unwrap(); // No need to reload the program
+    cpu.reset(None).unwrap(); // No need to reload the program
 
     cpu.memory.write_32(0x2000_00FF, 777).unwrap(); // Odd number
     cpu.run().unwrap();
@@ -128,5 +131,5 @@ fn program_c_branch() {
 
 #[test]
 fn maximum_size_memory() {
-    let _cpu: Cpu<0x10000000, 0x10000000> = Cpu::new();
+    let _memory: BoxedMemory<0x10000000, 0x10000000> = BoxedMemory::new(None).unwrap();
 }
