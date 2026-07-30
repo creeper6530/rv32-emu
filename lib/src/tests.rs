@@ -14,8 +14,8 @@ fn sign_extend_test() {
 
 #[test]
 fn initialization_test() {
-    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(None).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(None).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap(); // We don't intend to execute this!
 
     assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base()));
@@ -28,8 +28,8 @@ const PROGRAM_NOP: [u8; 4] = [
 
 #[test]
 fn program_nop() {
-    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_NOP)).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_NOP)).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
@@ -41,8 +41,8 @@ const PROGRAM_ADDI: [u8; 4] = [
 
 #[test]
 fn program_addi() {
-    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_ADDI)).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_ADDI)).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
@@ -62,8 +62,8 @@ const PROGRAM_MEMWRITE: [u8; 16] = [
 
 #[test]
 fn program_memwrite() {
-    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_MEMWRITE)).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_MEMWRITE)).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
@@ -77,9 +77,9 @@ fn program_memwrite() {
 
 #[test]
 fn program_c_memwrite() {
-    let memory: BoxedMemory<1024, 1024> =
+    let mut memory: BoxedMemory<1024, 1024> =
         BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/memwrite.bin")[..])).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.run().unwrap();
@@ -89,11 +89,11 @@ fn program_c_memwrite() {
 
 #[test]
 fn program_c_functioncall() {
-    let memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(
+    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(
         &include_bytes!("../../c_test_progs/functioncall.bin")[..],
     ))
     .unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
@@ -113,9 +113,9 @@ fn program_c_functioncall() {
 
 #[test]
 fn program_c_branch() {
-    let memory: BoxedMemory<1024, 1024> =
+    let mut memory: BoxedMemory<1024, 1024> =
         BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/branch.bin")[..])).unwrap();
-    let mut cpu = Cpu::new(memory);
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
@@ -138,9 +138,10 @@ fn memmap_program_c_memwrite() {
 
     // SAFETY: If underlying file is any way modified while the memory mapping is in use,
     // we risk UB. Shared locking attempts to prevent this, but it is not guaranteed to work on all platforms.
-    let memory = unsafe { MemmapMemory::new(&file, 2048) }.expect("Failed to open memory mapping!");
+    let mut memory =
+        unsafe { MemmapMemory::new(&file, 2048) }.expect("Failed to open memory mapping!");
 
-    let mut cpu = Cpu::new(memory);
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.run().unwrap();
@@ -152,11 +153,11 @@ fn memmap_program_c_memwrite() {
 
 #[test]
 fn memmap_fileless_program_c_memwrite() {
-    let memory =
+    let mut memory =
         MemmapMemory::new_fileless(include_bytes!("../../c_test_progs/memwrite.bin"), 2048)
             .unwrap();
 
-    let mut cpu = Cpu::new(memory);
+    let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.run().unwrap();

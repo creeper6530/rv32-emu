@@ -39,55 +39,6 @@ pub trait AddressSpace {
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>;
 }
 
-// Implements for `Box<dyn AddressSpace>` and `&mut dyn AddressSpace`
-// This allows `Cpu` to accept a dynamically-dispatched memory implementation
-// (for example when we don't know at compile time which implementation we want)
-impl<T: core::ops::DerefMut<Target = dyn AddressSpace>> AddressSpace for T {
-    // Just one dereference would create infinite recursion, so we always need to dereference twice.
-
-    #[inline(always)]
-    fn instr_mem_base(&self) -> u32 {
-        (**self).instr_mem_base()
-    }
-    #[inline(always)]
-    fn data_mem_base(&self) -> u32 {
-        (**self).data_mem_base()
-    }
-    #[inline(always)]
-    fn instr_mem_end(&self) -> u32 {
-        (**self).instr_mem_end()
-    }
-    #[inline(always)]
-    fn data_mem_end(&self) -> u32 {
-        (**self).data_mem_end()
-    }
-
-    #[inline]
-    fn read_8(&self, addr: u32) -> Result<u8, Fault> {
-        (**self).read_8(addr)
-    }
-    #[inline]
-    fn read_16(&self, addr: u32) -> Result<u16, Fault> {
-        (**self).read_16(addr)
-    }
-    #[inline]
-    fn read_32(&self, addr: u32) -> Result<u32, Fault> {
-        (**self).read_32(addr)
-    }
-    #[inline]
-    fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        (**self).write_8(addr, value)
-    }
-    #[inline]
-    fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        (**self).write_16(addr, value)
-    }
-    #[inline]
-    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        (**self).write_32(addr, value)
-    }
-}
-
 impl Debug for dyn AddressSpace {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(

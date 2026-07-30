@@ -183,14 +183,14 @@ pub enum Instruction {
 // --------------------------------------------------
 
 #[derive(Debug)]
-pub struct Cpu<T: AddressSpace> {
+pub struct Cpu<'a, T: AddressSpace + ?Sized> {
     regs: RegArray,
     pc: Wrapping<u32>,
     next_pc: Wrapping<u32>,
-    memory: T,
+    memory: &'a mut T,
 }
 
-impl<T: AddressSpace> Cpu<T> {
+impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
     #[inline]
     fn write_reg(&mut self, reg: Regs, value: u32) {
         if reg != Regs::Zero {
@@ -699,8 +699,8 @@ impl<T: AddressSpace> Cpu<T> {
     }
 }
 
-impl<T: AddressSpace> Cpu<T> {
-    pub fn new(memory: T) -> Self {
+impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
+    pub fn new(memory: &'a mut T) -> Self {
         let new = Cpu {
             regs: RegArray::new(),
             pc: Wrapping(0),

@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    let memory: Box<dyn emu::AddressSpace>;
+    let mut memory: Box<dyn emu::AddressSpace>;
 
     match filetype {
         FileType::Hex => {
@@ -123,10 +123,11 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    let mut cpu = emu::Cpu::new(memory);
+    // Cpu accepts a mutable reference to any AddressSpace implementation,
+    // so we can dereference the Box and borrow the underlying trait object.
+    let mut cpu = emu::Cpu::new(&mut (*memory));
 
     cpu.reset(entry_point)?;
-
     cpu.run()?;
 
     // RAII should take care of this
