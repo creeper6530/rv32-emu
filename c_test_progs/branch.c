@@ -1,4 +1,4 @@
-[[noreturn]] void _start() {
+int main(void) {
     volatile unsigned int *source = (volatile unsigned int *) 0x2000'00FF;
     volatile unsigned int *dest = (volatile unsigned int *) 0x2000'00AA;
 
@@ -9,6 +9,5 @@
         *dest = 456;
     }
 
-    asm("ebreak");
-    while (1) { };
+    return 0;
 }

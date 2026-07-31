@@ -96,16 +96,6 @@ fn program_c_functioncall() {
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
-    cpu.step().unwrap();
-    cpu.step().unwrap();
-    cpu.step().unwrap();
-    cpu.step().unwrap();
-    cpu.step().unwrap();
-    cpu.step().unwrap();
-    // Execute up until the `jal`, then check that the PC landed at the correct address
-    // To be edited when `functioncall.c` is changed`
-    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base() + 0x28));
-
     cpu.run().unwrap();
 
     assert_eq!(cpu.memory.read_16(0x2000_0321).unwrap(), 15);
@@ -127,6 +117,23 @@ fn program_c_branch() {
     cpu.memory.write_32(0x2000_00FF, 777).unwrap(); // Odd number
     cpu.run().unwrap();
     assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 456);
+}
+
+#[test]
+fn program_c_literal() {
+    let mut memory: BoxedMemory<1024, 1024> =
+        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/literal.bin")[..])).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
+    cpu.reset(None).unwrap();
+
+    cpu.run().unwrap();
+
+    let mut buffer = [0u8; 8];
+    const DST_ADDR: u32 = 0x2000_0000;
+    for i in 0..8 {
+        buffer[i] = cpu.memory.read_8(DST_ADDR + (i as u32)).unwrap();
+    }
+    assert_eq!(&buffer, b"Testing\0");
 }
 
 #[test]

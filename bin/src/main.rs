@@ -110,8 +110,8 @@ fn main() -> anyhow::Result<()> {
     builder.init();
 
     match cli.entry_point {
-        Some(ep) => info!("Using entry point: {:#08X}", ep),
-        None => info!("No entry point specified, will auto-decide from file"),
+        Some(ep) => debug!("Using entry point: {:#08X}", ep),
+        None => debug!("No entry point specified, will auto-decide from file"),
     }
 
     let filetype = cli.filetype.unwrap_or_else(|| {
@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
             })
     });
 
-    info!("Filetype: {:?}", filetype);
+    debug!("Filetype: {:?}", filetype);
 
     // Bytecode to be loaded into the emulator's memory.
     let mut bytecode: Vec<u8>;
@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
 
             memory = Box::new(emu::BoxedMemory::<1024, 1024>::new(Some(&bytecode))?);
 
-            info!("Loaded {0:#X} ({0}) bytes", bytecode.len());
+            debug!("Loaded {0:#X} ({0}) bytes", bytecode.len());
             trace!("Bytecode: {:?}", bytecode);
 
             file = reader.into_inner(); // Reclaim ownership of the File
@@ -173,7 +173,7 @@ fn main() -> anyhow::Result<()> {
         FileType::Bin => {
             memory = Box::new(unsafe { emu::MemmapMemory::new(&file, 1024 * 1024)? });
 
-            info!("Memory-mapped {0:#X} ({0}) bytes", file.metadata()?.len());
+            debug!("Memory-mapped {0:#X} ({0}) bytes", file.metadata()?.len());
         }
         FileType::Elf => {
             todo!()
@@ -185,7 +185,8 @@ fn main() -> anyhow::Result<()> {
     let mut cpu = emu::Cpu::new(&mut (*memory));
 
     cpu.reset(cli.entry_point)?;
-    cpu.run()?;
+    let (a0, _a1) = cpu.run()?;
+    info!("Exit code: {:#}", a0);
 
     debug!("{:X?}", cpu);
 

@@ -17,7 +17,7 @@ pub enum Fault {
     InvalidInstruction(Instruction),
 
     AllZeroInstruction,
-    Halt,
+    Halt { a0: u32, a1: u32 }, // ABI return values in a0 and a1
 
     MemoryTooSmall,
     IOError,
@@ -33,7 +33,11 @@ impl core::fmt::Display for Fault {
             Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),
 
             Fault::AllZeroInstruction => write!(f, "all-zero instruction encountered (illegal)"),
-            Fault::Halt => write!(f, "EBREAK instruction encountered"),
+            Fault::Halt { a0, a1 } => write!(
+                f,
+                "EBREAK instruction encountered with registers: a0={:#X}, a1={:#X}",
+                a0, a1
+            ),
 
             Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
             Fault::IOError => write!(f, "I/O error occurred"),
@@ -681,14 +685,14 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
         match imm {
             0x000 => {
                 // ECALL
-                warn!("ECALL invoked at PC: {:#X}", self.pc.0);
-
                 // Currently NOOP
             }
             0x001 => {
                 // EBREAK
-                warn!("EBREAK invoked at PC: {:#X}", self.pc.0);
-                return Err(Fault::Halt);
+                return Err(Fault::Halt {
+                    a0: self.read_reg(Regs::A0),
+                    a1: self.read_reg(Regs::A1),
+                });
             }
             _ => {
                 error!("Illegal instruction: {:?}", instr);
@@ -741,14 +745,18 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
 
     /// Runs until a halt instruction is encountered or a fault occurs
     ///
-    /// Halt is triggered by an ECALL with a0=1
-    pub fn run(&mut self) -> Result<(), Fault> {
+    /// Halt is triggered by an EBREAK instruction,
+    /// which returns the values of registers a0 and a1 as a tuple (ABI return values)
+    pub fn run(&mut self) -> Result<(u32, u32), Fault> {
         loop {
             match self.step() {
                 Ok(_) => {}
-                Err(Fault::Halt) => {
-                    info!("CPU halted at PC: {:#X}", self.pc.0);
-                    return Ok(());
+                Err(Fault::Halt { a0, a1 }) => {
+                    info!(
+                        "CPU halted at PC: {:#X} (a0: {:#X}, a1: {:#X})",
+                        self.pc.0, a0, a1
+                    );
+                    return Ok((a0, a1));
                 }
                 Err(e) => {
                     error!("CPU fault at PC: {:#X}: {:?}", self.pc.0, e);
