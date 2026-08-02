@@ -218,10 +218,6 @@ fn main() -> anyhow::Result<()> {
                 "Error: ELF file is not executable. Only executable ELF files are supported."
             );
 
-            let segments: Vec<_> = elf.segments().collect();
-            debug!("Segments: {:#X?}", segments);
-            elf.entry();
-
             memory = Box::new(emu::ObjectMemory::new(elf, &mut ram)?);
         }
     };

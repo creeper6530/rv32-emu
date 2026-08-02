@@ -702,14 +702,12 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
 
 impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
     pub fn new(memory: &'a mut T) -> Self {
-        let new = Cpu {
+        Cpu {
             regs: RegArray::default(),
             pc: Wrapping(0),
             next_pc: Wrapping(0),
             memory,
-        };
-
-        new
+        }
     }
 
     /// Meant to be called like `let mut cpu = Cpu::new(...).init(...);`,
