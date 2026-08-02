@@ -79,14 +79,15 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             Ok(self.data[(addr - Self::DATA_MEM_BASE) as usize])
         } else {
             error!("Invalid memory read at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 
     #[inline]
     fn read_16(&self, addr: u32) -> Result<u16, Fault> {
         // Instruction memory
-        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() {
+        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 1 {
+            // -1 because we read 2 bytes
             let index = (addr - Self::INSTR_MEM_BASE) as usize;
             Ok(u16::from_le_bytes([
                 self.instr[index],
@@ -94,19 +95,20 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             ]))
         }
         // Data memory
-        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
+        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() - 1 {
             let index = (addr - Self::DATA_MEM_BASE) as usize;
             Ok(u16::from_le_bytes([self.data[index], self.data[index + 1]]))
         } else {
             error!("Invalid memory read at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 
     #[inline]
     fn read_32(&self, addr: u32) -> Result<u32, Fault> {
         // Instruction memory
-        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() {
+        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 3 {
+            // -3 because we read 4 bytes
             let index = (addr - Self::INSTR_MEM_BASE) as usize;
             Ok(u32::from_le_bytes([
                 self.instr[index],
@@ -116,7 +118,7 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             ]))
         }
         // Data memory
-        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
+        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() - 3 {
             let index = (addr - Self::DATA_MEM_BASE) as usize;
             Ok(u32::from_le_bytes([
                 self.data[index],
@@ -126,7 +128,7 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             ]))
         } else {
             error!("Invalid memory read at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 
@@ -138,7 +140,7 @@ impl<'a> AddressSpace for SliceMemory<'a> {
                 "Instruction memory is read-only, cannot write to address: {:#X}",
                 addr
             );
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::ReadOnlyAddress(addr))
         }
         // Data memory
         else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
@@ -146,22 +148,22 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             Ok(())
         } else {
             error!("Invalid memory write at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 
     #[inline]
     fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
         // Instruction memory
-        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() {
+        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 1 {
             error!(
                 "Instruction memory is read-only, cannot write to address: {:#X}",
                 addr
             );
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::ReadOnlyAddress(addr))
         }
         // Data memory
-        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
+        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() - 1 {
             // I could write `value.to_le_bytes().iter().enumerate().for_each(|(i, b)| self.data[index + i] = *b);`,
             // but that optimizes to the same code as below, and is less readable IMO.
 
@@ -172,22 +174,22 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             Ok(())
         } else {
             error!("Invalid memory write at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 
     #[inline]
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
         // Instruction memory
-        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() {
+        if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 3 {
             error!(
                 "Instruction memory is read-only, cannot write to address: {:#X}",
                 addr
             );
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::ReadOnlyAddress(addr))
         }
         // Data memory
-        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
+        else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() - 3 {
             let index = (addr - Self::DATA_MEM_BASE) as usize;
             let bytes = value.to_le_bytes();
             self.data[index] = bytes[0];
@@ -197,7 +199,7 @@ impl<'a> AddressSpace for SliceMemory<'a> {
             Ok(())
         } else {
             error!("Invalid memory write at address: {:#X}", addr);
-            Err(Fault::InvalidMemoryAccess(addr))
+            Err(Fault::InvalidAddress(addr))
         }
     }
 }
@@ -265,7 +267,7 @@ where
             return Ok(self.stack[offset]);
         }
 
-        Err(Fault::InvalidMemoryAccess(addr))
+        Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]

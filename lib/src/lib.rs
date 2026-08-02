@@ -12,7 +12,8 @@ pub use memory::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Fault {
-    InvalidMemoryAccess(u32),
+    InvalidAddress(u32),
+    ReadOnlyAddress(u32),
     UndecodedInstruction(u32),
     InvalidInstruction(Instruction),
 
@@ -26,8 +27,11 @@ pub enum Fault {
 impl core::fmt::Display for Fault {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Fault::InvalidMemoryAccess(addr) => {
-                write!(f, "invalid memory access at address: {:#X}", addr)
+            Fault::InvalidAddress(addr) => {
+                write!(f, "accessed invalid address: {:#X}", addr)
+            }
+            Fault::ReadOnlyAddress(addr) => {
+                write!(f, "attempted to write to read-only address: {:#X}", addr)
             }
             Fault::UndecodedInstruction(instr) => write!(f, "undecoded instruction: {:#X}", instr),
             Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),

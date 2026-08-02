@@ -17,6 +17,71 @@ fn sign_extend_test() {
 }
 
 #[test]
+fn memrw_test() {
+    let mut ram = [0u8; 1024];
+    let memory = SliceMemory::new(&[], &mut ram);
+
+    // Test null pointer dereference (address 0)
+    assert_eq!(
+        memory.read_8(0x0000_0000),
+        Err(Fault::InvalidAddress(0x0000_0000))
+    );
+
+    // Test reading from the stack top (beyond the valid stack memory range)
+    assert_eq!(
+        memory.read_8(memory.stack_top()),
+        Err(Fault::InvalidAddress(memory.stack_top()))
+    );
+
+    // Test reading from an address just below the stack top (valid)
+    assert_eq!(memory.read_8(memory.stack_top() - 1), Ok(0));
+
+    // Test reading a halfword that spans the boundary of valid memory
+    assert_eq!(
+        memory.read_16(memory.stack_top() - 1),
+        Err(Fault::InvalidAddress(memory.stack_top() - 1))
+    );
+
+    // Test reading from an empty instruction memory
+    assert_eq!(
+        memory.read_8(memory.instr_start()),
+        Err(Fault::InvalidAddress(memory.instr_start()))
+    );
+
+    let instr = [0xEF, 0xBE, 0xAD, 0xDE];
+    let mut memory = SliceMemory::new(&instr, &mut ram);
+
+    // Test reading a word from instruction memory
+    assert_eq!(memory.read_32(memory.instr_start()), Ok(0xDEADBEEF));
+
+    // Test unaligned reading a halfword from instruction memory
+    assert_eq!(memory.read_16(memory.instr_start() + 1), Ok(0xADBE));
+
+    // Test reading a halfword from instruction memory that spans the boundary of valid memory
+    assert_eq!(
+        memory.read_16(memory.instr_start() + 3),
+        Err(Fault::InvalidAddress(memory.instr_start() + 3))
+    );
+
+    // Test writing to instruction memory (which is read-only)
+    assert_eq!(
+        memory.write_16(memory.instr_start(), 0x1234),
+        Err(Fault::ReadOnlyAddress(memory.instr_start()))
+    );
+
+    // Test writing to data memory
+    let data_addr = memory.stack_top() - 2;
+    assert_eq!(memory.write_16(data_addr, 0xABCD), Ok(()));
+    assert_eq!(memory.read_16(data_addr), Ok(0xABCD));
+
+    // Test writing a word that spans the boundary of valid memory
+    assert_eq!(
+        memory.write_32(memory.stack_top() - 2, 0x12345678),
+        Err(Fault::InvalidAddress(memory.stack_top() - 2))
+    );
+}
+
+#[test]
 fn initialization_test() {
     let mut memory = SliceMemory::new(&[], &mut []);
     let mut cpu = Cpu::new(&mut memory);
