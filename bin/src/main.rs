@@ -2,12 +2,16 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 
-use anyhow::{Context, Ok};
+use anyhow::{Context, Ok, ensure};
 use clap::Parser;
-use rv32_emu_lib as emu;
-
 #[allow(unused_imports)]
 use log::{LevelFilter, debug, error, info, trace, warn};
+#[cfg(target_os = "linux")]
+use memmap2::Advice;
+use memmap2::{Mmap, MmapOptions};
+use object::{Architecture, File as ObjectFile, Object, ObjectKind};
+
+use rv32_emu_lib as emu;
 
 // --------------------------------------------------
 
@@ -130,9 +134,6 @@ fn main() -> anyhow::Result<()> {
 
     debug!("Filetype: {:?}", filetype);
 
-    // Bytecode to be loaded into the emulator's memory.
-    let mut bytecode: Vec<u8>;
-
     let mut file = File::open(cli.file.as_path())
         .with_context(|| format!("Failed to open executable file: {}", cli.file.display()))?;
     file.lock_shared().with_context(|| {
@@ -142,15 +143,23 @@ fn main() -> anyhow::Result<()> {
         )
     })?;
 
+    // Either that or that will be used to create the memory mapping, depending on the file type.
+    let mut bytecode: Vec<u8>;
+    let instr_memmap: Mmap;
+
+    let mut ram = emu::create_boxed_slice(1024 * 1024); // 1 MiB of RAM
     let mut memory: Box<dyn emu::AddressSpace>;
 
     match filetype {
         FileType::Hex => {
-            let mut reader = std::io::BufReader::new(file);
+            let mut hex_string = String::with_capacity(file.metadata()?.len() as usize);
 
-            let mut hex_string = String::with_capacity(reader.get_ref().metadata()?.len() as usize);
-
-            reader.read_to_string(&mut hex_string)?;
+            file.read_to_string(&mut hex_string).with_context(|| {
+                format!(
+                    "Failed to read hex file: {}. Not valid UTF-8?",
+                    cli.file.display()
+                )
+            })?;
             bytecode = hex::decode(
                 hex_string
                     .replace("0x", "")
@@ -163,19 +172,52 @@ fn main() -> anyhow::Result<()> {
                 chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
             });
 
-            memory = Box::new(emu::BoxedMemory::<1024, 1024>::new(Some(&bytecode))?);
+            memory = Box::new(emu::SliceMemory::new(&bytecode, &mut ram));
 
             debug!("Loaded {0:#X} ({0}) bytes", bytecode.len());
             trace!("Bytecode: {:?}", bytecode);
-
-            file = reader.into_inner(); // Reclaim ownership of the File
         }
         FileType::Bin => {
-            memory = Box::new(unsafe { emu::MemmapMemory::new(&file, 1024 * 1024)? });
+            // SAFETY: The file is locked and shall not be modified while the memory is mapped to prevent UB.
+            instr_memmap = unsafe { MmapOptions::new().map(&file) }?;
+            memory = Box::new(emu::SliceMemory::new(&instr_memmap, &mut ram));
 
             debug!("Memory-mapped {0:#X} ({0}) bytes", file.metadata()?.len());
         }
         FileType::Elf => {
+            let elf_file_mmap = unsafe { Mmap::map(&file) }.with_context(|| {
+                format!("Failed to memory-map ELF file: {}", cli.file.display())
+            })?;
+
+            #[cfg(target_family = "unix")]
+            elf_file_mmap
+                .advise(Advice::WillNeed)
+                .unwrap_or_else(|e| warn!("Failed to advise imminent access for ELF file: {}", e));
+
+            // The `object` crate was written with memory-mapped files in mind,
+            // but we could also construct a `ReadCache` from a `&File`.
+            let elf = ObjectFile::parse(&*elf_file_mmap)
+                .with_context(|| format!("Failed to parse ELF file: {}", cli.file.display()))?;
+
+            ensure!(
+                (elf.architecture() == Architecture::Riscv32) && (!elf.is_64()),
+                "Error: ELF file is not for RISC-V 32-bit architecture. Only RISC-V 32-bit ELF files are supported."
+            );
+            ensure!(
+                elf.is_little_endian(),
+                "Error: ELF file is not little-endian. Only little-endian ELF files are supported."
+            );
+            ensure!(
+                elf.kind() == ObjectKind::Executable,
+                "Error: ELF file is not executable. Only executable ELF files are supported."
+            );
+
+            let segments: Vec<_> = elf.segments().collect();
+            debug!("Segments: {:#X?}", segments);
+            elf.entry();
+
+            let mem = emu::ObjectMemory::new(elf, &mut [])?;
+
             todo!()
         }
     };

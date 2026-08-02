@@ -8,7 +8,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # -Wl,-T,"$script_dir/linker.ld": Specifies the linker script to use for the linking process.
 
-clang -O --target=riscv32-none -march=rv32i -mabi=ilp32 -std=gnu23 \
+clang -O -flto --target=riscv32-none -march=rv32i -mabi=ilp32 -std=gnu23 \
     -ffreestanding -fno-builtin -nostdlib -nostartfiles \
     -Wall -Wextra -fvisibility=hidden \
     -static -fuse-ld=lld \

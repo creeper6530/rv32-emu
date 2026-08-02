@@ -1,3 +1,7 @@
+#[cfg(target_os = "linux")]
+use memmap2::Advice;
+use memmap2::MmapOptions;
+
 use super::*;
 
 #[test]
@@ -14,12 +18,9 @@ fn sign_extend_test() {
 
 #[test]
 fn initialization_test() {
-    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(None).unwrap();
+    let mut memory = SliceMemory::new(&[], &mut []);
     let mut cpu = Cpu::new(&mut memory);
-    cpu.reset(None).unwrap(); // We don't intend to execute this!
-
-    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base()));
-    assert_eq!(cpu.read_reg(Regs::Sp), cpu.memory.data_mem_end());
+    cpu.reset(None).unwrap(); // We don't intend to execute any instructions
 }
 
 const PROGRAM_NOP: [u8; 4] = [
@@ -28,26 +29,27 @@ const PROGRAM_NOP: [u8; 4] = [
 
 #[test]
 fn program_nop() {
-    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_NOP)).unwrap();
+    let mut memory = SliceMemory::new(&PROGRAM_NOP, &mut []);
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
     cpu.step().unwrap();
 }
 
-const PROGRAM_ADDI: [u8; 4] = [
-    0x93, 0x02, 0x10, 0x00, // addi t0, zero, 1
+const PROGRAM_ADDI: [u8; 8] = [
+    0x93, 0x82, 0x12, 0x00, // addi t0, t0, 1
+    0x93, 0x82, 0x22, 0x00, // addi t0, t0, 2
 ];
 
 #[test]
 fn program_addi() {
-    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_ADDI)).unwrap();
+    let mut memory = SliceMemory::new(&PROGRAM_ADDI, &mut []);
     let mut cpu = Cpu::new(&mut memory);
-    cpu.reset(None).unwrap();
+    cpu.reset(Some(0x1000_0004)).unwrap();
 
     cpu.step().unwrap();
 
-    assert_eq!(cpu.read_reg(Regs::T0), 1);
+    assert_eq!(cpu.read_reg(Regs::T0), 2);
 }
 
 // Assembler: https://riscv-simulator-five.vercel.app/
@@ -62,7 +64,10 @@ const PROGRAM_MEMWRITE: [u8; 16] = [
 
 #[test]
 fn program_memwrite() {
-    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(&PROGRAM_MEMWRITE)).unwrap();
+    // RAM backed by stack-allocated array
+    let mut ram = [0u8; 1024];
+
+    let mut memory = SliceMemory::new(&PROGRAM_MEMWRITE, &mut ram);
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -72,13 +77,15 @@ fn program_memwrite() {
     cpu.step().unwrap();
 
     assert_eq!(cpu.memory.read_32(0x2000_0000).unwrap(), 0x46A98);
-    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_mem_base() + 16));
+    assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_start() + 16));
 }
 
 #[test]
 fn program_c_memwrite() {
-    let mut memory: BoxedMemory<1024, 1024> =
-        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/memwrite.bin")[..])).unwrap();
+    // RAM backed by heap-allocated boxed slice
+    let mut ram = create_boxed_slice(1024);
+
+    let mut memory = SliceMemory::new(include_bytes!("../../c_test_progs/memwrite.bin"), &mut ram);
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -89,10 +96,13 @@ fn program_c_memwrite() {
 
 #[test]
 fn program_c_functioncall() {
-    let mut memory: BoxedMemory<1024, 1024> = BoxedMemory::new(Some(
-        &include_bytes!("../../c_test_progs/functioncall.bin")[..],
-    ))
-    .unwrap();
+    // RAM backed by heap-allocated boxed array
+    let mut ram = create_boxed_array::<1024>();
+
+    let mut memory = SliceMemory::new(
+        include_bytes!("../../c_test_progs/functioncall.bin"),
+        &mut *ram, // Need to dereference to coerce the array to a slice
+    );
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -103,26 +113,31 @@ fn program_c_functioncall() {
 
 #[test]
 fn program_c_branch() {
-    let mut memory: BoxedMemory<1024, 1024> =
-        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/branch.bin")[..])).unwrap();
+    // RAM backed by stack-allocated array
+    let mut ram = [0u8; 1024];
+    // Write an odd number (401 / 0x191) to the memory location 0x2000_00FF
+    ram[0xFF] = 0x91;
+    ram[0xFF + 1] = 0x01;
+
+    let mut memory = SliceMemory::new(include_bytes!("../../c_test_progs/branch.bin"), &mut ram);
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
-    cpu.memory.write_32(0x2000_00FF, 400).unwrap(); // Even number
-    cpu.run().unwrap();
-    assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 123);
-
-    cpu.reset(None).unwrap(); // No need to reload the program
-
-    cpu.memory.write_32(0x2000_00FF, 777).unwrap(); // Odd number
     cpu.run().unwrap();
     assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 456);
+
+    cpu.reset(None).unwrap(); // Reset the PC to run again
+
+    // We can't write into `ram` directly because of the borrow checker
+    cpu.memory.write_32(0x2000_00FF, 700).unwrap(); // Even number
+    cpu.run().unwrap();
+    assert_eq!(cpu.memory.read_32(0x2000_00AA).unwrap(), 123);
 }
 
 #[test]
 fn program_c_literal() {
-    let mut memory: BoxedMemory<1024, 1024> =
-        BoxedMemory::new(Some(&include_bytes!("../../c_test_progs/literal.bin")[..])).unwrap();
+    let mut ram = create_boxed_slice(1024);
+    let mut memory = SliceMemory::new(include_bytes!("../../c_test_progs/literal.bin"), &mut ram);
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -145,8 +160,20 @@ fn memmap_program_c_memwrite() {
 
     // SAFETY: If underlying file is any way modified while the memory mapping is in use,
     // we risk UB. Shared locking attempts to prevent this, but it is not guaranteed to work on all platforms.
-    let mut memory =
-        unsafe { MemmapMemory::new(&file, 2048) }.expect("Failed to open memory mapping!");
+    let instr_mmap = unsafe { MmapOptions::new().map(&file) }.unwrap();
+
+    let mut data_mmap = MmapOptions::new().len(1024).map_anon().unwrap();
+    // Transparent huge pages are only supported on Linux on anonymous memory mappings
+    #[cfg(target_os = "linux")]
+    data_mmap.advise(Advice::HugePage).unwrap_or_else(|e| {
+        warn!("Failed to advise huge pages for data memory: {}", e);
+    });
+    #[cfg(target_os = "linux")]
+    data_mmap.advise(Advice::Random).unwrap_or_else(|e| {
+        warn!("Failed to advise random access for data memory: {}", e);
+    });
+
+    let mut memory = SliceMemory::new(&instr_mmap, &mut data_mmap);
 
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
@@ -156,26 +183,4 @@ fn memmap_program_c_memwrite() {
 
     // Technically should be handled by RAII, but just to be sure.
     file.unlock().expect("Failed to unlock file!");
-}
-
-#[test]
-fn memmap_fileless_program_c_memwrite() {
-    let mut memory =
-        MemmapMemory::new_fileless(include_bytes!("../../c_test_progs/memwrite.bin"), 2048)
-            .unwrap();
-
-    let mut cpu = Cpu::new(&mut memory);
-    cpu.reset(None).unwrap();
-
-    cpu.run().unwrap();
-    assert_eq!(cpu.memory.read_32(0x2000_0040).unwrap(), 0x101);
-}
-
-#[test]
-fn instantiate_memory() {
-    // True maximum size that does not overlap.
-    let _heap_memory: BoxedMemory<0x10000000, 0x10000000> = BoxedMemory::new(None).unwrap();
-
-    // Needs to be smaller not to exceed the stack size limit of the test runner, maximum size of which is unknown.
-    let _array_memory: ArrayMemory<0x200, 0x200> = ArrayMemory::new(None).unwrap();
 }

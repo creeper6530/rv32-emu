@@ -1,7 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use core::num::Wrapping;
+use core::{fmt::Debug, num::Wrapping};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
@@ -20,7 +20,7 @@ pub enum Fault {
     Halt { a0: u32, a1: u32 }, // ABI return values in a0 and a1
 
     MemoryTooSmall,
-    IOError,
+    ObjectError,
 }
 
 impl core::fmt::Display for Fault {
@@ -40,16 +40,15 @@ impl core::fmt::Display for Fault {
             ),
 
             Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
-            Fault::IOError => write!(f, "I/O error occurred"),
+            Fault::ObjectError => write!(f, "object error occurred"),
         }
     }
 }
 impl core::error::Error for Fault {}
 
-#[cfg(feature = "std")]
-impl From<std::io::Error> for Fault {
-    fn from(_: std::io::Error) -> Self {
-        Fault::IOError
+impl From<object::Error> for Fault {
+    fn from(_: object::Error) -> Self {
+        Fault::ObjectError
     }
 }
 
@@ -57,11 +56,6 @@ impl From<std::io::Error> for Fault {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RegArray([u32; 32]);
-impl RegArray {
-    pub fn new() -> Self {
-        RegArray::default()
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
@@ -186,7 +180,6 @@ pub enum Instruction {
 
 // --------------------------------------------------
 
-#[derive(Debug)]
 pub struct Cpu<'a, T: AddressSpace + ?Sized> {
     regs: RegArray,
     pc: Wrapping<u32>,
@@ -706,15 +699,11 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
 impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
     pub fn new(memory: &'a mut T) -> Self {
         let new = Cpu {
-            regs: RegArray::new(),
+            regs: RegArray::default(),
             pc: Wrapping(0),
             next_pc: Wrapping(0),
             memory,
         };
-
-        // Force compile-time evaluation of the constants to trigger the assertions
-        let _ = new.memory.instr_mem_end();
-        let _ = new.memory.data_mem_end();
 
         new
     }
@@ -724,10 +713,11 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
     pub fn reset(&mut self, entry_point: Option<u32>) -> Result<(), Fault> {
         info!("Resetting CPU");
 
-        self.pc = Wrapping(entry_point.unwrap_or(self.memory.instr_mem_base()));
+        self.regs = RegArray::default(); // Clear all registers to zero
+        self.pc = Wrapping(entry_point.unwrap_or_else(|| self.memory.instr_start()));
 
         // Initialize the stack pointer to the top of the data memory (growing downwards on RISC-V)
-        self.write_reg(Regs::Sp, self.memory.data_mem_end());
+        self.write_reg(Regs::Sp, self.memory.stack_top());
 
         Ok(())
     }
@@ -764,6 +754,18 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
                 }
             }
         }
+    }
+}
+
+impl<T: AddressSpace + ?Sized> Debug for Cpu<'_, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Omit the memory field from the debug output to avoid printing the entire memory contents
+        // (and causing a stack overflow)
+        f.debug_struct("Cpu")
+            .field("regs", &self.regs)
+            .field("pc", &self.pc)
+            .field("next_pc", &self.next_pc)
+            .finish()
     }
 }
 
