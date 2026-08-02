@@ -34,16 +34,16 @@ pub trait AddressSpace {
 
 // --------------------------------------------------
 
-pub struct SliceMemory<'a> {
-    instr: &'a [u8],
-    data: &'a mut [u8],
+pub struct SliceMemory<'instr, 'data> {
+    instr: &'instr [u8],
+    data: &'data mut [u8],
 }
 
-impl<'a> SliceMemory<'a> {
+impl<'instr, 'data> SliceMemory<'instr, 'data> {
     const INSTR_MEM_BASE: u32 = 0x1000_0000;
     const DATA_MEM_BASE: u32 = 0x2000_0000;
 
-    pub fn new(instr: &'a [u8], data: &'a mut [u8]) -> Result<Self, Fault> {
+    pub fn new(instr: &'instr [u8], data: &'data mut [u8]) -> Result<Self, Fault> {
         if Self::INSTR_MEM_BASE + instr.len() as u32 <= Self::DATA_MEM_BASE {
             Ok(Self { instr, data })
         } else {
@@ -61,7 +61,7 @@ impl<'a> SliceMemory<'a> {
     }
 }
 
-impl<'a> AddressSpace for SliceMemory<'a> {
+impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
     #[inline(always)]
     fn instr_start(&self) -> u32 {
         Self::INSTR_MEM_BASE
