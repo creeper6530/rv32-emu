@@ -1,3 +1,4 @@
+// Like `std::hint::black_box()` in Rust, prevents constant folding
 #define BLACK_BOX(x) \
     ({ \
         typeof(x) _x = (x); \
@@ -5,7 +6,8 @@
         _x; \
     })
 
-short variable = 100;
+short data = 100;
+short bss;
 
 int strlen(const char *str) {
     int length = 0;
@@ -16,12 +18,13 @@ int strlen(const char *str) {
 }
 
 int main(void) {
-    volatile short *ptr = &variable;
+    volatile short *bss_ptr = &bss;
+    volatile short *data_ptr = &data;
 
-    const char *test_str = "Test String";
+    const char *test_str = "Test String"; // rodata
     for (int i = strlen(BLACK_BOX(test_str)); i > 0; i--) {
-        *ptr += 1;
+        *bss_ptr += 1;
     }
 
-    return variable; // Correct result should be 111 (100 + 11)
+    return *bss_ptr + *data_ptr; // Correct result should be 111 (11 + 100)
 }

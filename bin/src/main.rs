@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
 
     // Either that or that will be used to create the memory mapping, depending on the file type.
     let mut bytecode: Vec<u8>;
-    let instr_memmap: Mmap;
+    let memmap: Mmap;
 
     let mut ram = emu::create_boxed_slice(1024 * 1024); // 1 MiB of RAM
     let mut memory: Box<dyn emu::AddressSpace>;
@@ -172,31 +172,37 @@ fn main() -> anyhow::Result<()> {
                 chunk.reverse(); // Reverse each 4-byte chunk for little-endian representation
             });
 
-            memory = Box::new(emu::SliceMemory::new(&bytecode, &mut ram));
+            memory = Box::new(
+                emu::SliceMemory::new(&bytecode, &mut ram)
+                    .with_context(|| "Failed to create memory - instruction bytecode too large")?,
+            );
 
             debug!("Loaded {0:#X} ({0}) bytes", bytecode.len());
             trace!("Bytecode: {:?}", bytecode);
         }
         FileType::Bin => {
             // SAFETY: The file is locked and shall not be modified while the memory is mapped to prevent UB.
-            instr_memmap = unsafe { MmapOptions::new().map(&file) }?;
-            memory = Box::new(emu::SliceMemory::new(&instr_memmap, &mut ram));
+            memmap = unsafe { Mmap::map(&file) }?;
+            memory = Box::new(
+                emu::SliceMemory::new(&memmap, &mut ram)
+                    .with_context(|| "Failed to create memory - binary file too large")?,
+            );
 
             debug!("Memory-mapped {0:#X} ({0}) bytes", file.metadata()?.len());
         }
         FileType::Elf => {
-            let elf_file_mmap = unsafe { Mmap::map(&file) }.with_context(|| {
+            memmap = unsafe { MmapOptions::new().map(&file) }.with_context(|| {
                 format!("Failed to memory-map ELF file: {}", cli.file.display())
             })?;
 
             #[cfg(target_family = "unix")]
-            elf_file_mmap
+            memmap
                 .advise(Advice::WillNeed)
                 .unwrap_or_else(|e| warn!("Failed to advise imminent access for ELF file: {}", e));
 
             // The `object` crate was written with memory-mapped files in mind,
             // but we could also construct a `ReadCache` from a `&File`.
-            let elf = ObjectFile::parse(&*elf_file_mmap)
+            let elf = ObjectFile::parse(&*memmap)
                 .with_context(|| format!("Failed to parse ELF file: {}", cli.file.display()))?;
 
             ensure!(
@@ -216,9 +222,7 @@ fn main() -> anyhow::Result<()> {
             debug!("Segments: {:#X?}", segments);
             elf.entry();
 
-            let mem = emu::ObjectMemory::new(elf, &mut [])?;
-
-            todo!()
+            memory = Box::new(emu::ObjectMemory::new(elf, &mut ram)?);
         }
     };
 

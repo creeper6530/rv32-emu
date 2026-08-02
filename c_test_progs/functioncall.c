@@ -15,9 +15,6 @@ short mul_3(short x) {
 
 int main(void) {
     short x = 5;
-    short result = mul_3(BLACK_BOX(x));
-    volatile unsigned short *ptr = (volatile unsigned short *) 0x2000'0321;
-    *ptr = result;
-
-    return 0;
+    // The BLACK_BOX() macro prevents the compiler from optimizing away the function call to mul_3().
+    return mul_3(BLACK_BOX(x));
 }

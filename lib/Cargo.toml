@@ -21,4 +21,3 @@ rv32-emu-lib = { path = ".", features = [
     "std",
     "object"
 ] }
-

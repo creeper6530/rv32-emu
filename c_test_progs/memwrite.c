@@ -1,6 +1,6 @@
 int main() {
-    volatile unsigned int *ptr = (volatile unsigned int *) (0x2000'0040);
-    *ptr = 0x101;
-
+    // `volatile` is used to prevent the compiler from optimizing away the write operation
+    // (or putting it in a register). We can find the value in stack memory later.
+    volatile int x = 0xC0FFEE;
     return 0;
 }

@@ -1,3 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["lib", "bin"]
+
+[profile.dev]
+overflow-checks = false # Uses wrapping arithmetic

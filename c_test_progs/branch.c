@@ -1,13 +1,7 @@
 int main(void) {
-    volatile unsigned int *source = (volatile unsigned int *) 0x2000'00FF;
-    volatile unsigned int *dest = (volatile unsigned int *) 0x2000'00AA;
+    // Get the current stack pointer value
+    volatile unsigned char *sp;
+    asm volatile("mv %0, sp" : "=r"(sp));
 
-    int cond = *source;
-    if (cond % 2 == 0) {
-        *dest = 123;
-    } else {
-        *dest = 456;
-    }
-
-    return 0;
+    return *(sp - 1) % 2 == 0 ? 12 : 45;
 }

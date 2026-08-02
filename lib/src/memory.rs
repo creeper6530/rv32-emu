@@ -3,7 +3,7 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
-use alloc::{vec, vec::Vec};
+use alloc::vec;
 
 #[cfg(feature = "object")]
 use object::{Object, ObjectSegment};
@@ -43,8 +43,12 @@ impl<'a> SliceMemory<'a> {
     const INSTR_MEM_BASE: u32 = 0x1000_0000;
     const DATA_MEM_BASE: u32 = 0x2000_0000;
 
-    pub fn new(instr: &'a [u8], data: &'a mut [u8]) -> Self {
-        Self { instr, data }
+    pub fn new(instr: &'a [u8], data: &'a mut [u8]) -> Result<Self, Fault> {
+        if Self::INSTR_MEM_BASE + instr.len() as u32 <= Self::DATA_MEM_BASE {
+            Ok(Self { instr, data })
+        } else {
+            Err(Fault::MemoryTooSmall)
+        }
     }
 
     #[inline(always)]
@@ -207,11 +211,20 @@ impl<'a> AddressSpace for SliceMemory<'a> {
 // --------------------------------------------------
 
 #[cfg(feature = "object")]
+#[derive(Debug)]
+struct WritableSegment {
+    start: u32,
+    end: u32,
+    data: Vec<u8>,
+}
+
+#[cfg(feature = "object")]
 pub struct ObjectMemory<'obj, 'stack, T>
 where
-    T: Object<'obj> + 'obj,
+    T: Object<'obj>,
 {
     object: T,
+    writable_segments: Vec<WritableSegment>,
     stack: &'stack mut [u8],
 
     _object_lifetime: core::marker::PhantomData<&'obj T>,
@@ -220,13 +233,41 @@ where
 #[cfg(feature = "object")]
 impl<'obj, 'stack, T> ObjectMemory<'obj, 'stack, T>
 where
-    T: Object<'obj> + 'obj,
+    T: Object<'obj>,
 {
     const STACK_MEM_BASE: u32 = 0x3000_0000;
 
     pub fn new(object: T, stack: &'stack mut [u8]) -> Result<Self, Fault> {
+        let mut writable_segments = Vec::new();
+
+        for segment in object.segments() {
+            let start = u32::try_from(segment.address()).map_err(|_| Fault::ObjectError)?;
+            let size = u32::try_from(segment.size()).map_err(|_| Fault::ObjectError)?;
+            let end = start.checked_add(size).ok_or(Fault::ObjectError)?;
+
+            if segment.permissions().writable() {
+                let file_data = segment.data().map_err(|_| Fault::ObjectError)?;
+                let mut data = vec![0_u8; size as usize];
+                let copy_len = core::cmp::min(file_data.len(), data.len());
+                data[..copy_len].copy_from_slice(&file_data[..copy_len]);
+
+                debug!(
+                    "Segment: {:#X} - {:#X} ({} bytes), writable",
+                    start, end, size,
+                );
+
+                writable_segments.push(WritableSegment { start, end, data });
+            } else {
+                debug!(
+                    "Segment: {:#X} - {:#X} ({} bytes), read-only",
+                    start, end, size,
+                );
+            }
+        }
+
         Ok(Self {
             object,
+            writable_segments,
             stack,
 
             _object_lifetime: core::marker::PhantomData,
@@ -237,7 +278,7 @@ where
 #[cfg(feature = "object")]
 impl<'obj, 'stack, T> AddressSpace for ObjectMemory<'obj, 'stack, T>
 where
-    T: Object<'obj> + 'obj,
+    T: Object<'obj>,
 {
     #[inline(always)]
     fn instr_start(&self) -> u32 {
@@ -250,9 +291,19 @@ where
 
     #[inline]
     fn read_8(&self, addr: u32) -> Result<u8, Fault> {
+        trace!("Reading 8 bits from address: {:#X}", addr);
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter()
+            .find(|segment| addr >= segment.start && addr < segment.end)
+        {
+            return Ok(segment.data[(addr - segment.start) as usize]);
+        }
+
         // `.segments()` is already an iterator
         for seg in self.object.segments() {
-            let start: u32 = seg.address().try_into().map_err(|_| Fault::ObjectError)?;
+            let start: u32 = u32::try_from(seg.address()).map_err(|_| Fault::ObjectError)?;
             let end: u32 = start + u32::try_from(seg.size()).map_err(|_| Fault::ObjectError)?;
 
             if addr >= start && addr < end {
@@ -272,27 +323,166 @@ where
 
     #[inline]
     fn read_16(&self, addr: u32) -> Result<u16, Fault> {
-        todo!()
+        trace!("Reading 16 bits from address: {:#X}", addr);
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter()
+            .find(|segment| addr >= segment.start && addr < segment.end - 1)
+        {
+            let offset = (addr - segment.start) as usize;
+            return Ok(u16::from_le_bytes([
+                segment.data[offset],
+                segment.data[offset + 1],
+            ]));
+        }
+
+        for segment in self.object.segments() {
+            let start = u32::try_from(segment.address()).map_err(|_| Fault::ObjectError)?;
+            let end = start + u32::try_from(segment.size()).map_err(|_| Fault::ObjectError)?;
+
+            if addr >= start && addr < end - 1 {
+                let offset = (addr - start) as usize;
+                let data = segment.data().map_err(|_| Fault::ObjectError)?;
+                return Ok(u16::from_le_bytes([data[offset], data[offset + 1]]));
+            }
+        }
+
+        if addr >= Self::STACK_MEM_BASE && addr < self.stack_top() - 1 {
+            let offset = (addr - Self::STACK_MEM_BASE) as usize;
+            return Ok(u16::from_le_bytes([
+                self.stack[offset],
+                self.stack[offset + 1],
+            ]));
+        }
+
+        Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
     fn read_32(&self, addr: u32) -> Result<u32, Fault> {
-        todo!()
+        trace!("Reading 32 bits from address: {:#X}", addr);
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter()
+            .find(|segment| addr >= segment.start && addr < segment.end - 3)
+        {
+            let offset = (addr - segment.start) as usize;
+            return Ok(u32::from_le_bytes([
+                segment.data[offset],
+                segment.data[offset + 1],
+                segment.data[offset + 2],
+                segment.data[offset + 3],
+            ]));
+        }
+
+        for segment in self.object.segments() {
+            let start = u32::try_from(segment.address()).map_err(|_| Fault::ObjectError)?;
+            let end = start + u32::try_from(segment.size()).map_err(|_| Fault::ObjectError)?;
+
+            if addr >= start && addr < end - 3 {
+                let offset = (addr - start) as usize;
+                let data = segment.data().map_err(|_| Fault::ObjectError)?;
+                return Ok(u32::from_le_bytes([
+                    data[offset],
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
+                ]));
+            }
+        }
+
+        if addr >= Self::STACK_MEM_BASE && addr < self.stack_top() - 3 {
+            let offset = (addr - Self::STACK_MEM_BASE) as usize;
+            return Ok(u32::from_le_bytes([
+                self.stack[offset],
+                self.stack[offset + 1],
+                self.stack[offset + 2],
+                self.stack[offset + 3],
+            ]));
+        }
+
+        Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        todo!()
+        trace!("Writing 8 bits to address: {:#X}", addr);
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter_mut()
+            .find(|segment| addr >= segment.start && addr < segment.end)
+        {
+            segment.data[(addr - segment.start) as usize] = value;
+            return Ok(());
+        }
+
+        if addr >= Self::STACK_MEM_BASE && addr < self.stack_top() {
+            let offset = (addr - Self::STACK_MEM_BASE) as usize;
+            self.stack[offset] = value;
+            return Ok(());
+        }
+
+        Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
     fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        todo!()
+        trace!("Writing 16 bits to address: {:#X}", addr);
+
+        let bytes = value.to_le_bytes();
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter_mut()
+            .find(|segment| addr >= segment.start && addr < segment.end - 1)
+        {
+            let offset = (addr - segment.start) as usize;
+            segment.data[offset] = bytes[0];
+            segment.data[offset + 1] = bytes[1];
+            return Ok(());
+        }
+
+        if addr >= Self::STACK_MEM_BASE && addr < self.stack_top() - 1 {
+            let offset = (addr - Self::STACK_MEM_BASE) as usize;
+            self.stack[offset] = bytes[0];
+            self.stack[offset + 1] = bytes[1];
+            return Ok(());
+        }
+
+        Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        todo!()
+        trace!("Writing 32 bits to address: {:#X}", addr);
+        let bytes = value.to_le_bytes();
+
+        if let Some(segment) = self
+            .writable_segments
+            .iter_mut()
+            .find(|segment| addr >= segment.start && addr < (segment.end - 3))
+        {
+            let offset = (addr - segment.start) as usize;
+            segment.data[offset] = bytes[0];
+            segment.data[offset + 1] = bytes[1];
+            segment.data[offset + 2] = bytes[2];
+            segment.data[offset + 3] = bytes[3];
+            return Ok(());
+        }
+
+        if addr >= Self::STACK_MEM_BASE && addr < self.stack_top() - 3 {
+            let offset = (addr - Self::STACK_MEM_BASE) as usize;
+            self.stack[offset] = bytes[0];
+            self.stack[offset + 1] = bytes[1];
+            self.stack[offset + 2] = bytes[2];
+            self.stack[offset + 3] = bytes[3];
+            return Ok(());
+        }
+
+        Err(Fault::InvalidAddress(addr))
     }
 }
 
