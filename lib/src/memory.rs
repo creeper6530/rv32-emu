@@ -8,6 +8,9 @@ use alloc::vec;
 #[cfg(feature = "object")]
 use object::{Object, ObjectSegment};
 
+#[cfg(feature = "std")]
+use std::io::{Read, Write};
+
 use crate::Fault;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -483,6 +486,127 @@ where
         }
 
         Err(Fault::InvalidAddress(addr))
+    }
+}
+
+// --------------------------------------------------
+
+pub trait MMIO {
+    const MMIO_BASE: u32;
+
+    fn read_8(&mut self, addr: u32) -> Result<u8, Fault>;
+    fn read_32(&mut self, addr: u32) -> Result<u32, Fault>;
+    fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault>;
+    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>;
+}
+
+// --------------------------------------------------
+
+#[cfg(feature = "std")]
+/**
+# Registers
+| Offset | Name   | Description       | Access | Size |
+|:------:|:-------|:------------------|:------:|:----:|
+| 0x0    | INPUT  | Input characters  | RO     | 8 |
+| 0x4    | OUTPUT | Output characters | WO     | 8 |
+| 0x8    | FLAGS  | Flags register    | RW     | 8 |
+
+## Flags
+| Bits | Description | Type |
+|:----:|:------------|:----:|
+| 31:2 | Reserved | - |
+| 1    | Output lock ­– 1 if output is locked, 0 otherwise | RW |
+| 0    | Input ready – 1 if input is available, 0 otherwise | RO |
+*/
+pub struct Stdio {
+    input: std::io::Stdin,
+    output: std::io::Stdout,
+
+    input_ready: bool,
+    output_lock: Option<std::io::StdoutLock<'static>>,
+}
+
+#[cfg(feature = "std")]
+impl Stdio {
+    pub fn new() -> Self {
+        Self {
+            input: std::io::stdin(),
+            output: std::io::stdout(),
+            input_ready: false,
+            output_lock: None,
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl MMIO for Stdio {
+    const MMIO_BASE: u32 = 0xA000_0000;
+
+    #[inline]
+    fn read_8(&mut self, addr: u32) -> Result<u8, Fault> {
+        match addr.checked_sub(Self::MMIO_BASE) {
+            Some(0x0) => {
+                // INPUT
+                let mut buffer: [u8; 1] = [0];
+                self.input
+                    .read_exact(&mut buffer)
+                    .map_err(|_| Fault::IOError)?;
+                Ok(buffer[0])
+            }
+            Some(0x4) => Err(Fault::WriteOnlyRegister), // OUTPUT
+            Some(0x8) => {
+                // FLAGS
+                // Bit 0: input ready, Bit 1: output lock
+                Ok((self.input_ready as u8) | (self.output_lock.is_some() as u8) << 1)
+            }
+            _ => Err(Fault::InvalidAddress(addr)),
+        }
+    }
+
+    #[inline]
+    fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
+        match addr.checked_sub(Self::MMIO_BASE) {
+            Some(0x0) => Err(Fault::ReadOnlyRegister), // INPUT
+            Some(0x4) => {
+                // OUTPUT
+                let bytes = value.to_le_bytes();
+                self.output.write_all(&bytes).map_err(|_| Fault::IOError)?;
+                Ok(())
+            }
+            Some(0x8) => {
+                // FLAGS
+                // Read-only bits are ignored
+                match (value & 0b10) != 0 {
+                    false => drop(self.output_lock.take()),
+                    true => self.output_lock = Some(self.output.lock()),
+                }
+                Ok(())
+            }
+            _ => Err(Fault::InvalidAddress(addr)),
+        }
+    }
+
+    #[inline(always)]
+    fn read_32(&mut self, _addr: u32) -> Result<u32, Fault> {
+        Err(Fault::WrongRegisterSize {
+            expected: 8,
+            actual: 32,
+        })
+    }
+
+    #[inline(always)]
+    fn write_32(&mut self, _addr: u32, _value: u32) -> Result<(), Fault> {
+        Err(Fault::WrongRegisterSize {
+            expected: 8,
+            actual: 32,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+impl Default for Stdio {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

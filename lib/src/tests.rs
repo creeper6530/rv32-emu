@@ -1,4 +1,4 @@
-//! Ultimte test: `for file in ./c_test_progs/*.elf; cargo run -- $file -vv; end`
+//! Ultimate test: `for file in ./c_test_progs/*.elf; cargo run -- $file -vv; end`
 
 #[cfg(target_os = "linux")]
 use memmap2::Advice;
@@ -215,8 +215,9 @@ fn program_c_literal() {
 
     let mut buffer = [0u8; 8];
     let dst_addr = cpu.read_reg(Regs::Sp) - 8;
-    for i in 0..8 {
-        buffer[i] = cpu.memory.read_8(dst_addr + (i as u32)).unwrap();
+    // Clippy linted for `enumerate()` instead of `0..8`
+    for (i, item) in buffer.iter_mut().enumerate() {
+        *item = cpu.memory.read_8(dst_addr + (i as u32)).unwrap();
     }
     assert_eq!(&buffer, b"Testing\0");
 }

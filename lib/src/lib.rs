@@ -14,14 +14,18 @@ pub use memory::*;
 pub enum Fault {
     InvalidAddress(u32),
     ReadOnlyAddress(u32),
-    UndecodedInstruction(u32),
-    InvalidInstruction(Instruction),
-
-    AllZeroInstruction,
-    Halt { a0: u32, a1: u32 }, // ABI return values in a0 and a1
-
     MemoryTooSmall,
     ObjectError,
+
+    IOError,
+    ReadOnlyRegister,
+    WriteOnlyRegister,
+    WrongRegisterSize { expected: usize, actual: usize },
+
+    UndecodedInstruction(u32),
+    InvalidInstruction(Instruction),
+    AllZeroInstruction,
+    Halt { a0: u32, a1: u32 }, // ABI return values in a0 and a1
 }
 
 impl core::fmt::Display for Fault {
@@ -33,23 +37,32 @@ impl core::fmt::Display for Fault {
             Fault::ReadOnlyAddress(addr) => {
                 write!(f, "attempted to write to read-only address: {:#X}", addr)
             }
+            Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
+            Fault::ObjectError => write!(f, "object error occurred"),
+
+            Fault::IOError => write!(f, "I/O error occurred"),
+            Fault::ReadOnlyRegister => write!(f, "attempted to write to read-only register"),
+            Fault::WriteOnlyRegister => write!(f, "attempted to read from write-only register"),
+            Fault::WrongRegisterSize { expected, actual } => write!(
+                f,
+                "wrong register size accessed: expected {} bytes, got {} bytes",
+                expected, actual
+            ),
+
             Fault::UndecodedInstruction(instr) => write!(f, "undecoded instruction: {:#X}", instr),
             Fault::InvalidInstruction(instr) => write!(f, "invalid instruction: {:?}", instr),
-
             Fault::AllZeroInstruction => write!(f, "all-zero instruction encountered (illegal)"),
             Fault::Halt { a0, a1 } => write!(
                 f,
                 "EBREAK instruction encountered with registers: a0={:#X}, a1={:#X}",
                 a0, a1
             ),
-
-            Fault::MemoryTooSmall => write!(f, "memory too small for program attempted to load"),
-            Fault::ObjectError => write!(f, "object error occurred"),
         }
     }
 }
 impl core::error::Error for Fault {}
 
+#[cfg(feature = "object")]
 impl From<object::Error> for Fault {
     fn from(_: object::Error) -> Self {
         Fault::ObjectError
