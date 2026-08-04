@@ -3,18 +3,20 @@
 int main() {
     puts("Hello, world!\n");
 
-    puts("Answer: ");
+    puts("Enter string: ");
     flush();
 
     char buffer[100];
-    int length = fgets(buffer, sizeof(buffer));
-    if (length >= 0) {
-        puts("You entered: ");
-        puts(buffer);
-        puts("\n");
-    } else {
-        puts("Error reading input.\n");
-    }
+    fgets(buffer, sizeof(buffer));
+    printf("String: %s\n", buffer);
+
+    printf("Char: %c\n", 'z');
+    printf("Signed int: %d\n", -12345);
+    printf("Unsigned int: %u\n", 12345);
+    printf("Hex: %x\n", 0xDEADBEEF);
+    printf("Octal: %o\n", 07531);
+    printf("Binary: %b\n", 0b101010);
+    printf("Pointer: %p\n", buffer);
 
     return 0;
 }

@@ -22,8 +22,7 @@ clang -O -flto --target=riscv32-none -march=rv32im -mabi=ilp32 -std=gnu23 \
     -Wl,-T,"linker.ld" \
     "start.S" "$1" "${driver_sources[@]}" -o "target/${1%.c}.elf"
 llvm-strip "target/${1%.c}.elf"
-llvm-objdump "target/${1%.c}.elf" -d
 
 llvm-objcopy -O binary "target/${1%.c}.elf" "target/${1%.c}.bin"
 
-cd -
+cd ${OLDPWD} # Return to the previous working directory (set by the cd command automatically)
