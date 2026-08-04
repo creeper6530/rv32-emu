@@ -149,6 +149,30 @@ fn program_memwrite() {
     assert_eq!(cpu.pc, Wrapping(cpu.memory.instr_start() + 16));
 }
 
+const PROGRAM_MULDIV: [u8; 12] = [
+    0xB3, 0x02, 0xB5, 0x02, // mul t0, a0, a1
+    0x33, 0x43, 0xB5, 0x02, // div t1, a0, a1
+    0xB3, 0x63, 0xB5, 0x02, // rem t2, a0, a1
+];
+
+#[test]
+fn program_muldiv() {
+    let mut memory = SliceMemory::new(&PROGRAM_MULDIV, &mut [], &mut []).unwrap();
+    let mut cpu = Cpu::new(&mut memory);
+    cpu.reset(None).unwrap();
+
+    cpu.write_reg(Regs::A0, 20); // Load 20 into a0
+    cpu.write_reg(Regs::A1, 3); // Load 3 into a1
+
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+    cpu.step().unwrap();
+
+    assert_eq!(cpu.read_reg(Regs::T0), 60); // 20 * 3 = 60
+    assert_eq!(cpu.read_reg(Regs::T1), 6); // 20 / 3 = 6
+    assert_eq!(cpu.read_reg(Regs::T2), 2); // 20 % 3 = 2
+}
+
 #[test]
 fn program_c_memwrite() {
     // RAM backed by heap-allocated boxed slice

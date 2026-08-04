@@ -15,7 +15,7 @@ mkdir -p target
 shopt -s nullglob
 driver_sources=(drivers/*.c)
 
-clang -O -flto --target=riscv32-none -march=rv32i -mabi=ilp32 -std=gnu23 \
+clang -O -flto --target=riscv32-none -march=rv32im -mabi=ilp32 -std=gnu23 \
     -ffreestanding -fno-builtin -nostdlib -nostartfiles \
     -Wall -Wextra -fvisibility=hidden \
     -static -fuse-ld=lld \

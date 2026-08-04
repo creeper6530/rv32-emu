@@ -358,63 +358,209 @@ impl<'a, T: AddressSpace + ?Sized> Cpu<'a, T> {
 
         match funct3 {
             0x0 => {
-                if funct7 == 0x20 {
-                    // SUB
-                    let result = self.read_reg(rs1).wrapping_sub(self.read_reg(rs2));
-                    self.write_reg(rd, result);
-                } else {
-                    // if funct7 == 0x00
-                    // ADD
-                    let result = self.read_reg(rs1).wrapping_add(self.read_reg(rs2));
-                    self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // ADD
+                        let result = self.read_reg(rs1).wrapping_add(self.read_reg(rs2));
+                        self.write_reg(rd, result);
+                    }
+                    0x20 => {
+                        // SUB
+                        let result = self.read_reg(rs1).wrapping_sub(self.read_reg(rs2));
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // MUL
+                        // Both rs1 and rs2 are signed, but it apparently doesn't matter due to truncation
+                        let rs1: i64 = self.read_reg(rs1) as i32 as i64;
+                        let rs2: i64 = self.read_reg(rs2) as i32 as i64;
+                        // Two 32s multiplied together can fit in a 64, so this is safe
+                        let result = rs1.strict_mul(rs2) as i32 as u32;
+                        self.write_reg(rd, result);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
                 }
             }
             0x4 => {
-                // XOR
-                let result = self.read_reg(rs1) ^ self.read_reg(rs2);
-                self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // XOR
+                        let result = self.read_reg(rs1) ^ self.read_reg(rs2);
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // DIV
+                        // Both rs1 and rs2 are signed
+                        let rs1: i32 = self.read_reg(rs1) as i32;
+                        let rs2: i32 = self.read_reg(rs2) as i32;
+                        let result = if rs2 == 0 {
+                            u32::MAX // Division by zero returns -1
+                        } else {
+                            // Division of MIN by -1 returns MIN, which is correct behavior
+                            rs1.wrapping_div(rs2) as u32
+                        };
+                        self.write_reg(rd, result);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             0x6 => {
-                // OR
-                let result = self.read_reg(rs1) | self.read_reg(rs2);
-                self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // OR
+                        let result = self.read_reg(rs1) | self.read_reg(rs2);
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // REM
+                        // Both rs1 and rs2 are signed
+                        let rs1: i32 = self.read_reg(rs1) as i32;
+                        let rs2: i32 = self.read_reg(rs2) as i32;
+                        let result = if rs2 == 0 {
+                            rs1 as u32 // Remainder of division by zero returns dividend
+                        } else {
+                            rs1.wrapping_rem(rs2) as u32
+                        };
+                        self.write_reg(rd, result);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             0x7 => {
-                // AND
-                let result = self.read_reg(rs1) & self.read_reg(rs2);
-                self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // AND
+                        let result = self.read_reg(rs1) & self.read_reg(rs2);
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // REMU
+                        // Both rs1 and rs2 are unsigned
+                        let rs1: u32 = self.read_reg(rs1);
+                        let rs2: u32 = self.read_reg(rs2);
+                        let result = if rs2 == 0 {
+                            rs1 // Remainder of division by zero returns dividend
+                        } else {
+                            rs1 % rs2 // Overflow on unsigned division is impossible
+                        };
+                        self.write_reg(rd, result);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             0x1 => {
-                // SLL
-                let shamt = self.read_reg(rs2) & 0x1F;
-                let result = self.read_reg(rs1) << shamt;
-                self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // SLL
+                        let shamt = self.read_reg(rs2) & 0x1F;
+                        let result = self.read_reg(rs1) << shamt;
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // MULH
+                        // Both rs1 and rs2 are signed
+                        let rs1: i64 = self.read_reg(rs1) as i32 as i64;
+                        let rs2: i64 = self.read_reg(rs2) as i32 as i64;
+                        // Two 32s multiplied together can fit in a 64, so this is safe
+                        let result = rs1.strict_mul(rs2) >> 32;
+                        self.write_reg(rd, result as i32 as u32);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             0x5 => {
-                if funct7 == 0x20 {
-                    // SRA
-                    // Rust does arithmetic right shift for signed integers
-                    let shamt = self.read_reg(rs2) & 0x1F;
-                    let result = ((self.read_reg(rs1) as i32) >> shamt) as u32;
-                    self.write_reg(rd, result);
-                } else {
-                    // if funct7 == 0x00
-                    // SRL
-                    // Rust does logical right shift for unsigned integers
-                    let shamt = self.read_reg(rs2) & 0x1F;
-                    let result = self.read_reg(rs1) >> shamt;
-                    self.write_reg(rd, result);
+                match funct7 {
+                    0x00 => {
+                        // if funct7 == 0x00
+                        // SRL
+                        // Rust does logical right shift for unsigned integers
+                        let shamt = self.read_reg(rs2) & 0x1F;
+                        let result = self.read_reg(rs1) >> shamt;
+                        self.write_reg(rd, result);
+                    }
+                    0x20 => {
+                        // SRA
+                        // Rust does arithmetic right shift for signed integers
+                        let shamt = self.read_reg(rs2) & 0x1F;
+                        let result = ((self.read_reg(rs1) as i32) >> shamt) as u32;
+                        self.write_reg(rd, result);
+                    }
+                    0x01 => {
+                        // DIVU
+                        // Both rs1 and rs2 are unsigned
+                        let rs1: u32 = self.read_reg(rs1);
+                        let rs2: u32 = self.read_reg(rs2);
+                        let result = if rs2 == 0 {
+                            u32::MAX // Division by zero returns all ones
+                        } else {
+                            rs1 / rs2 // Overflow on unsigned division is impossible
+                        };
+                        self.write_reg(rd, result);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
                 }
             }
             0x2 => {
-                // SLT
-                let result = (self.read_reg(rs1) as i32) < (self.read_reg(rs2) as i32);
-                self.write_reg(rd, result as u32);
+                match funct7 {
+                    0x00 => {
+                        // SLT
+                        let result = (self.read_reg(rs1) as i32) < (self.read_reg(rs2) as i32);
+                        self.write_reg(rd, result as u32);
+                    }
+                    0x01 => {
+                        // MULHSU
+                        // rs1 is signed, rs2 is unsigned
+                        let rs1: i64 = self.read_reg(rs1) as i32 as i64;
+                        let rs2: i64 = self.read_reg(rs2) as u64 as i64;
+                        // Two 32s multiplied together can fit in a 64, so this is safe
+                        let result = rs1.strict_mul(rs2) >> 32;
+                        self.write_reg(rd, result as i32 as u32);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             0x3 => {
-                // SLTU
-                let result = self.read_reg(rs1) < self.read_reg(rs2);
-                self.write_reg(rd, result as u32);
+                match funct7 {
+                    0x00 => {
+                        // SLTU
+                        let result = self.read_reg(rs1) < self.read_reg(rs2);
+                        self.write_reg(rd, result as u32);
+                    }
+                    0x01 => {
+                        // MULHU
+                        // Both rs1 and rs2 are unsigned
+                        let rs1: u64 = self.read_reg(rs1) as u64;
+                        let rs2: u64 = self.read_reg(rs2) as u64;
+                        // Two 32s multiplied together can fit in a 64, so this is safe
+                        let result = rs1.strict_mul(rs2) >> 32;
+                        self.write_reg(rd, result as u32);
+                    }
+                    _ => {
+                        error!("Illegal instruction: {:?}", instr);
+                        return Err(Fault::InvalidInstruction(instr));
+                    }
+                }
             }
             _ => unreachable!("funct3 is 3 bits, instruction malformed: {:?}", instr),
         }
