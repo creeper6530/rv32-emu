@@ -1,4 +1,4 @@
-//! Ultimate test: `for file in ./c_test_progs/*.elf; cargo run -- $file -vv; end`
+//! Ultimate test: `for file in ./c/target/*.elf; cargo run -- $file -vv; end`
 
 #[cfg(target_os = "linux")]
 use memmap2::Advice;
@@ -155,7 +155,7 @@ fn program_c_memwrite() {
     let mut ram = create_boxed_slice(1024);
 
     let mut memory =
-        SliceMemory::new(include_bytes!("../../c_test_progs/memwrite.bin"), &mut ram).unwrap();
+        SliceMemory::new(include_bytes!("../../c/target/memwrite.bin"), &mut ram).unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -173,7 +173,7 @@ fn program_c_functioncall() {
     let mut ram = create_boxed_array::<1024>();
 
     let mut memory = SliceMemory::new(
-        include_bytes!("../../c_test_progs/functioncall.bin"),
+        include_bytes!("../../c/target/functioncall.bin"),
         &mut *ram, // Need to dereference to coerce the array to a slice
     )
     .unwrap();
@@ -190,7 +190,7 @@ fn program_c_branch() {
     // RAM backed by stack-allocated array
     let mut ram = [0u8; 1024];
     let mut memory =
-        SliceMemory::new(include_bytes!("../../c_test_progs/branch.bin"), &mut ram).unwrap();
+        SliceMemory::new(include_bytes!("../../c/target/branch.bin"), &mut ram).unwrap();
     memory.write_8(memory.stack_top() - 1, 41).unwrap(); // Odd number
 
     let mut cpu = Cpu::new(&mut memory);
@@ -207,7 +207,7 @@ fn program_c_branch() {
 fn program_c_literal() {
     let mut ram = create_boxed_slice(1024);
     let mut memory =
-        SliceMemory::new(include_bytes!("../../c_test_progs/literal.bin"), &mut ram).unwrap();
+        SliceMemory::new(include_bytes!("../../c/target/literal.bin"), &mut ram).unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -226,8 +226,7 @@ fn program_c_literal() {
 fn memmap_program_c_functioncall() {
     // Working directory of tests is the root directory of the package
     // https://doc.rust-lang.org/cargo/commands/cargo-test.html#working-directory-of-tests
-    let file =
-        std::fs::File::open("../c_test_progs/functioncall.bin").expect("Failed to open file!");
+    let file = std::fs::File::open("../c/target/functioncall.bin").expect("Failed to open file!");
     file.lock_shared().expect("Failed to lock file!");
 
     // SAFETY: If underlying file is any way modified while the memory mapping is in use,
