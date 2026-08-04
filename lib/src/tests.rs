@@ -21,7 +21,7 @@ fn sign_extend_test() {
 #[test]
 fn memrw_test() {
     let mut ram = [0u8; 1024];
-    let memory = SliceMemory::new(&[], &mut ram).unwrap();
+    let mut memory = SliceMemory::new(&[], &mut ram, &mut []).unwrap();
 
     // Test null pointer dereference (address 0)
     assert_eq!(
@@ -51,7 +51,7 @@ fn memrw_test() {
     );
 
     let instr = [0xEF, 0xBE, 0xAD, 0xDE];
-    let mut memory = SliceMemory::new(&instr, &mut ram).unwrap();
+    let mut memory = SliceMemory::new(&instr, &mut ram, &mut []).unwrap();
 
     // Test reading a word from instruction memory
     assert_eq!(memory.read_32(memory.instr_start()), Ok(0xDEADBEEF));
@@ -85,7 +85,7 @@ fn memrw_test() {
 
 #[test]
 fn initialization_test() {
-    let mut memory = SliceMemory::new(&[], &mut []).unwrap();
+    let mut memory = SliceMemory::new(&[], &mut [], &mut []).unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap(); // We don't intend to execute any instructions
 }
@@ -96,7 +96,7 @@ const PROGRAM_NOP: [u8; 4] = [
 
 #[test]
 fn program_nop() {
-    let mut memory = SliceMemory::new(&PROGRAM_NOP, &mut []).unwrap();
+    let mut memory = SliceMemory::new(&PROGRAM_NOP, &mut [], &mut []).unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -110,7 +110,7 @@ const PROGRAM_ADDI: [u8; 8] = [
 
 #[test]
 fn program_addi() {
-    let mut memory = SliceMemory::new(&PROGRAM_ADDI, &mut []).unwrap();
+    let mut memory = SliceMemory::new(&PROGRAM_ADDI, &mut [], &mut []).unwrap();
     let mut cpu = Cpu::new(&mut memory);
 
     // Only test with a specific entry point...
@@ -136,7 +136,7 @@ fn program_memwrite() {
     // RAM backed by stack-allocated array
     let mut ram = [0u8; 1024];
 
-    let mut memory = SliceMemory::new(&PROGRAM_MEMWRITE, &mut ram).unwrap();
+    let mut memory = SliceMemory::new(&PROGRAM_MEMWRITE, &mut ram, &mut []).unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -154,8 +154,12 @@ fn program_c_memwrite() {
     // RAM backed by heap-allocated boxed slice
     let mut ram = create_boxed_slice(1024);
 
-    let mut memory =
-        SliceMemory::new(include_bytes!("../../c/target/memwrite.bin"), &mut ram).unwrap();
+    let mut memory = SliceMemory::new(
+        include_bytes!("../../c/target/memwrite.bin"),
+        &mut ram,
+        &mut [],
+    )
+    .unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -175,6 +179,7 @@ fn program_c_functioncall() {
     let mut memory = SliceMemory::new(
         include_bytes!("../../c/target/functioncall.bin"),
         &mut *ram, // Need to dereference to coerce the array to a slice
+        &mut [],
     )
     .unwrap();
     let mut cpu = Cpu::new(&mut memory);
@@ -189,8 +194,12 @@ fn program_c_functioncall() {
 fn program_c_branch() {
     // RAM backed by stack-allocated array
     let mut ram = [0u8; 1024];
-    let mut memory =
-        SliceMemory::new(include_bytes!("../../c/target/branch.bin"), &mut ram).unwrap();
+    let mut memory = SliceMemory::new(
+        include_bytes!("../../c/target/branch.bin"),
+        &mut ram,
+        &mut [],
+    )
+    .unwrap();
     memory.write_8(memory.stack_top() - 1, 41).unwrap(); // Odd number
 
     let mut cpu = Cpu::new(&mut memory);
@@ -206,8 +215,12 @@ fn program_c_branch() {
 #[test]
 fn program_c_literal() {
     let mut ram = create_boxed_slice(1024);
-    let mut memory =
-        SliceMemory::new(include_bytes!("../../c/target/literal.bin"), &mut ram).unwrap();
+    let mut memory = SliceMemory::new(
+        include_bytes!("../../c/target/literal.bin"),
+        &mut ram,
+        &mut [],
+    )
+    .unwrap();
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();
 
@@ -244,7 +257,7 @@ fn memmap_program_c_functioncall() {
         warn!("Failed to advise random access for data memory: {}", e);
     });
 
-    let mut memory = SliceMemory::new(&instr_mmap, &mut data_mmap).unwrap();
+    let mut memory = SliceMemory::new(&instr_mmap, &mut data_mmap, &mut []).unwrap();
 
     let mut cpu = Cpu::new(&mut memory);
     cpu.reset(None).unwrap();

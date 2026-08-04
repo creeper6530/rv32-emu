@@ -147,6 +147,9 @@ fn main() -> anyhow::Result<()> {
     let mut bytecode: Vec<u8>;
     let memmap: Mmap;
 
+    let mut stdio = emu::Stdio::new();
+    let mmio = &mut [&mut stdio as &mut dyn emu::MMIO];
+
     let mut ram = emu::create_boxed_slice(1024 * 1024); // 1 MiB of RAM
     let mut memory: Box<dyn emu::AddressSpace>;
 
@@ -173,7 +176,7 @@ fn main() -> anyhow::Result<()> {
             });
 
             memory = Box::new(
-                emu::SliceMemory::new(&bytecode, &mut ram)
+                emu::SliceMemory::new(&bytecode, &mut ram, &mut [])
                     .with_context(|| "Failed to create memory - instruction bytecode too large")?,
             );
 
@@ -183,8 +186,9 @@ fn main() -> anyhow::Result<()> {
         FileType::Bin => {
             // SAFETY: The file is locked and shall not be modified while the memory is mapped to prevent UB.
             memmap = unsafe { Mmap::map(&file) }?;
+
             memory = Box::new(
-                emu::SliceMemory::new(&memmap, &mut ram)
+                emu::SliceMemory::new(&memmap, &mut ram, mmio)
                     .with_context(|| "Failed to create memory - binary file too large")?,
             );
 
@@ -218,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                 "Error: ELF file is not executable. Only executable ELF files are supported."
             );
 
-            memory = Box::new(emu::ObjectMemory::new(elf, &mut ram)?);
+            memory = Box::new(emu::ObjectMemory::new(elf, &mut ram, mmio)?);
         }
     };
 

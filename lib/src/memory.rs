@@ -27,9 +27,9 @@ pub trait AddressSpace {
     /// Stack top - the first address above the stack (end of data memory).
     fn stack_top(&self) -> u32;
 
-    fn read_8(&self, addr: u32) -> Result<u8, Fault>;
-    fn read_16(&self, addr: u32) -> Result<u16, Fault>;
-    fn read_32(&self, addr: u32) -> Result<u32, Fault>;
+    fn read_8(&mut self, addr: u32) -> Result<u8, Fault>;
+    fn read_16(&mut self, addr: u32) -> Result<u16, Fault>;
+    fn read_32(&mut self, addr: u32) -> Result<u32, Fault>;
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault>;
     fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault>;
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>;
@@ -37,18 +37,23 @@ pub trait AddressSpace {
 
 // --------------------------------------------------
 
-pub struct SliceMemory<'instr, 'data> {
+pub struct SliceMemory<'instr, 'data, 'mmio> {
     instr: &'instr [u8],
     data: &'data mut [u8],
+    mmio: &'mmio mut [&'mmio mut dyn MMIO],
 }
 
-impl<'instr, 'data> SliceMemory<'instr, 'data> {
+impl<'instr, 'data, 'mmio> SliceMemory<'instr, 'data, 'mmio> {
     const INSTR_MEM_BASE: u32 = 0x1000_0000;
     const DATA_MEM_BASE: u32 = 0x2000_0000;
 
-    pub fn new(instr: &'instr [u8], data: &'data mut [u8]) -> Result<Self, Fault> {
+    pub fn new(
+        instr: &'instr [u8],
+        data: &'data mut [u8],
+        mmio: &'mmio mut [&'mmio mut dyn MMIO],
+    ) -> Result<Self, Fault> {
         if Self::INSTR_MEM_BASE + instr.len() as u32 <= Self::DATA_MEM_BASE {
-            Ok(Self { instr, data })
+            Ok(Self { instr, data, mmio })
         } else {
             Err(Fault::MemoryTooSmall)
         }
@@ -64,7 +69,7 @@ impl<'instr, 'data> SliceMemory<'instr, 'data> {
     }
 }
 
-impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
+impl<'instr, 'data, 'mmio> AddressSpace for SliceMemory<'instr, 'data, 'mmio> {
     #[inline(always)]
     fn instr_start(&self) -> u32 {
         Self::INSTR_MEM_BASE
@@ -75,7 +80,7 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
     }
 
     #[inline]
-    fn read_8(&self, addr: u32) -> Result<u8, Fault> {
+    fn read_8(&mut self, addr: u32) -> Result<u8, Fault> {
         // We can't use generic params in (range) patterns (E0158), so we have to use if instead.
         // Instruction memory
         if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() {
@@ -85,13 +90,19 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
         else if addr >= Self::DATA_MEM_BASE && addr < self.data_mem_end() {
             Ok(self.data[(addr - Self::DATA_MEM_BASE) as usize])
         } else {
+            for mmio in self.mmio.iter_mut() {
+                if mmio.range().contains(&addr) {
+                    return mmio.read_8(addr);
+                }
+            }
+
             error!("Invalid memory read at address: {:#X}", addr);
             Err(Fault::InvalidAddress(addr))
         }
     }
 
     #[inline]
-    fn read_16(&self, addr: u32) -> Result<u16, Fault> {
+    fn read_16(&mut self, addr: u32) -> Result<u16, Fault> {
         // Instruction memory
         if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 1 {
             // -1 because we read 2 bytes
@@ -112,7 +123,7 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
     }
 
     #[inline]
-    fn read_32(&self, addr: u32) -> Result<u32, Fault> {
+    fn read_32(&mut self, addr: u32) -> Result<u32, Fault> {
         // Instruction memory
         if addr >= Self::INSTR_MEM_BASE && addr < self.instr_mem_end() - 3 {
             // -3 because we read 4 bytes
@@ -134,6 +145,12 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
                 self.data[index + 3],
             ]))
         } else {
+            /* for mmio in self.mmio.iter_mut() {
+                if mmio.range().contains(&addr) {
+                    return mmio.read_32(addr);
+                }
+            } */
+
             error!("Invalid memory read at address: {:#X}", addr);
             Err(Fault::InvalidAddress(addr))
         }
@@ -154,6 +171,12 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
             self.data[(addr - Self::DATA_MEM_BASE) as usize] = value;
             Ok(())
         } else {
+            for mmio in self.mmio.iter_mut() {
+                if mmio.range().contains(&addr) {
+                    return mmio.write_8(addr, value);
+                }
+            }
+
             error!("Invalid memory write at address: {:#X}", addr);
             Err(Fault::InvalidAddress(addr))
         }
@@ -205,6 +228,12 @@ impl<'instr, 'data> AddressSpace for SliceMemory<'instr, 'data> {
             self.data[index + 3] = bytes[3];
             Ok(())
         } else {
+            /* for mmio in self.mmio.iter_mut() {
+                if mmio.range().contains(&addr) {
+                    return mmio.write_32(addr, value);
+                }
+            } */
+
             error!("Invalid memory write at address: {:#X}", addr);
             Err(Fault::InvalidAddress(addr))
         }
@@ -222,25 +251,30 @@ struct WritableSegment {
 }
 
 #[cfg(feature = "object")]
-pub struct ObjectMemory<'obj, 'stack, T>
+pub struct ObjectMemory<'obj, 'stack, 'mmio, T>
 where
     T: Object<'obj>,
 {
     object: T,
     writable_segments: Vec<WritableSegment>,
     stack: &'stack mut [u8],
+    mmio: &'mmio mut [&'mmio mut dyn MMIO],
 
     _object_lifetime: core::marker::PhantomData<&'obj T>,
 }
 
 #[cfg(feature = "object")]
-impl<'obj, 'stack, T> ObjectMemory<'obj, 'stack, T>
+impl<'obj, 'stack, 'mmio, T> ObjectMemory<'obj, 'stack, 'mmio, T>
 where
     T: Object<'obj>,
 {
     const STACK_MEM_BASE: u32 = 0x3000_0000;
 
-    pub fn new(object: T, stack: &'stack mut [u8]) -> Result<Self, Fault> {
+    pub fn new(
+        object: T,
+        stack: &'stack mut [u8],
+        mmio: &'mmio mut [&'mmio mut dyn MMIO],
+    ) -> Result<Self, Fault> {
         let mut writable_segments = Vec::new();
 
         for segment in object.segments() {
@@ -272,14 +306,14 @@ where
             object,
             writable_segments,
             stack,
-
+            mmio,
             _object_lifetime: core::marker::PhantomData,
         })
     }
 }
 
 #[cfg(feature = "object")]
-impl<'obj, 'stack, T> AddressSpace for ObjectMemory<'obj, 'stack, T>
+impl<'obj, 'stack, 'mmio, T> AddressSpace for ObjectMemory<'obj, 'stack, 'mmio, T>
 where
     T: Object<'obj>,
 {
@@ -293,9 +327,7 @@ where
     }
 
     #[inline]
-    fn read_8(&self, addr: u32) -> Result<u8, Fault> {
-        trace!("Reading 8 bits from address: {:#X}", addr);
-
+    fn read_8(&mut self, addr: u32) -> Result<u8, Fault> {
         if let Some(segment) = self
             .writable_segments
             .iter()
@@ -321,13 +353,17 @@ where
             return Ok(self.stack[offset]);
         }
 
+        for mmio in self.mmio.iter_mut() {
+            if mmio.range().contains(&addr) {
+                return mmio.read_8(addr);
+            }
+        }
+
         Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
-    fn read_16(&self, addr: u32) -> Result<u16, Fault> {
-        trace!("Reading 16 bits from address: {:#X}", addr);
-
+    fn read_16(&mut self, addr: u32) -> Result<u16, Fault> {
         if let Some(segment) = self
             .writable_segments
             .iter()
@@ -363,9 +399,7 @@ where
     }
 
     #[inline]
-    fn read_32(&self, addr: u32) -> Result<u32, Fault> {
-        trace!("Reading 32 bits from address: {:#X}", addr);
-
+    fn read_32(&mut self, addr: u32) -> Result<u32, Fault> {
         if let Some(segment) = self
             .writable_segments
             .iter()
@@ -411,8 +445,6 @@ where
 
     #[inline]
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        trace!("Writing 8 bits to address: {:#X}", addr);
-
         if let Some(segment) = self
             .writable_segments
             .iter_mut()
@@ -428,13 +460,17 @@ where
             return Ok(());
         }
 
+        for mmio in self.mmio.iter_mut() {
+            if mmio.range().contains(&addr) {
+                return mmio.write_8(addr, value);
+            }
+        }
+
         Err(Fault::InvalidAddress(addr))
     }
 
     #[inline]
     fn write_16(&mut self, addr: u32, value: u16) -> Result<(), Fault> {
-        trace!("Writing 16 bits to address: {:#X}", addr);
-
         let bytes = value.to_le_bytes();
 
         if let Some(segment) = self
@@ -460,7 +496,6 @@ where
 
     #[inline]
     fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault> {
-        trace!("Writing 32 bits to address: {:#X}", addr);
         let bytes = value.to_le_bytes();
 
         if let Some(segment) = self
@@ -492,12 +527,15 @@ where
 // --------------------------------------------------
 
 pub trait MMIO {
-    const MMIO_BASE: u32;
+    fn range(&self) -> core::ops::RangeInclusive<u32>;
 
     fn read_8(&mut self, addr: u32) -> Result<u8, Fault>;
-    fn read_32(&mut self, addr: u32) -> Result<u32, Fault>;
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault>;
-    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>;
+
+    // We first need to solve the problem of address ranging with 4byte registers,
+    // for not we simply allow only 1byte registers.
+    /* fn read_32(&mut self, addr: u32) -> Result<u32, Fault>;
+    fn write_32(&mut self, addr: u32, value: u32) -> Result<(), Fault>; */
 }
 
 // --------------------------------------------------
@@ -508,8 +546,8 @@ pub trait MMIO {
 | Offset | Name   | Description       | Access | Size |
 |:------:|:-------|:------------------|:------:|:----:|
 | 0x0    | INPUT  | Input characters  | RO     | 8 |
-| 0x4    | OUTPUT | Output characters | WO     | 8 |
-| 0x8    | FLAGS  | Flags register    | RW     | 8 |
+| 0x1    | OUTPUT | Output characters | WO     | 8 |
+| 0x2    | FLAGS  | Flags register    | RW     | 8 |
 
 ## Flags
 | Bits | Description | Type |
@@ -517,21 +555,28 @@ pub trait MMIO {
 | 31:3 | Reserved | - |
 | 2    | Flush output – write 1 to flush output buffer | SC |
 | 1    | Output lock ­– 1 if output is locked, 0 otherwise | RW |
-| 0    | Input ready – currently unused | RO |
+| 0    | Input lock – 1 if input is locked, 0 otherwise | RW |
 */
 pub struct Stdio {
     input: std::io::Stdin,
     output: std::io::Stdout,
 
+    input_lock: Option<std::io::StdinLock<'static>>,
     output_lock: Option<std::io::StdoutLock<'static>>,
 }
 
 #[cfg(feature = "std")]
 impl Stdio {
+    const BASE: u32 = 0xA000_0000;
+    const INPUT_OFFSET: u32 = 0x0;
+    const OUTPUT_OFFSET: u32 = 0x1;
+    const FLAGS_OFFSET: u32 = 0x2;
+
     pub fn new() -> Self {
         Self {
             input: std::io::stdin(),
             output: std::io::stdout(),
+            input_lock: None,
             output_lock: None,
         }
     }
@@ -539,12 +584,15 @@ impl Stdio {
 
 #[cfg(feature = "std")]
 impl MMIO for Stdio {
-    const MMIO_BASE: u32 = 0xA000_0000;
+    #[inline(always)]
+    fn range(&self) -> core::ops::RangeInclusive<u32> {
+        Self::BASE..=(Self::BASE + Self::FLAGS_OFFSET)
+    }
 
     #[inline]
     fn read_8(&mut self, addr: u32) -> Result<u8, Fault> {
-        match addr.checked_sub(Self::MMIO_BASE) {
-            Some(0x0) => {
+        match addr.checked_sub(Self::BASE) {
+            Some(Self::INPUT_OFFSET) => {
                 // INPUT
                 let mut buffer: [u8; 1] = [0];
                 self.input
@@ -552,11 +600,11 @@ impl MMIO for Stdio {
                     .map_err(|_| Fault::IOError)?;
                 Ok(buffer[0])
             }
-            Some(0x4) => Err(Fault::WriteOnlyRegister), // OUTPUT
-            Some(0x8) => {
+            Some(Self::OUTPUT_OFFSET) => Err(Fault::WriteOnlyRegister), // OUTPUT
+            Some(Self::FLAGS_OFFSET) => {
                 // FLAGS
-                // Bit 0: currently unused, Bit 1: output lock, Bit 2: write-only
-                Ok((self.output_lock.is_some() as u8) << 1)
+                // Bit 0: input lock, Bit 1: output lock, Bit 2: write-only
+                Ok((self.output_lock.is_some() as u8) << 1 | (self.input_lock.is_some() as u8))
             }
             _ => Err(Fault::InvalidAddress(addr)),
         }
@@ -564,24 +612,32 @@ impl MMIO for Stdio {
 
     #[inline]
     fn write_8(&mut self, addr: u32, value: u8) -> Result<(), Fault> {
-        match addr.checked_sub(Self::MMIO_BASE) {
-            Some(0x0) => Err(Fault::ReadOnlyRegister), // INPUT
-            Some(0x4) => {
+        match addr.checked_sub(Self::BASE) {
+            Some(Self::INPUT_OFFSET) => Err(Fault::ReadOnlyRegister), // INPUT
+            Some(Self::OUTPUT_OFFSET) => {
+                trace!("Writing 8 bits to OUTPUT: {:?}", value as char);
                 // OUTPUT
                 let bytes = value.to_le_bytes();
                 self.output.write_all(&bytes).map_err(|_| Fault::IOError)?;
                 Ok(())
             }
-            Some(0x8) => {
+            Some(Self::FLAGS_OFFSET) => {
                 // FLAGS
                 // Read-only bits are ignored
-                self.output_lock = if (value & (1 << 1)) != 0 {
-                    Some(self.output.lock())
+                if (value & (1 << 1)) != 0 {
+                    if self.output_lock.is_none() {
+                        trace!("Acquiring output lock");
+                        self.output_lock = Some(self.output.lock());
+                    }
                 } else {
-                    None
+                    if self.output_lock.is_some() {
+                        trace!("Releasing output lock");
+                        self.output_lock = None;
+                    }
                 };
 
                 if (value & (1 << 2)) != 0 {
+                    trace!("Flushing output buffer");
                     self.output.flush().map_err(|_| Fault::IOError)?
                 }
 
@@ -591,7 +647,7 @@ impl MMIO for Stdio {
         }
     }
 
-    #[inline(always)]
+    /* #[inline(always)]
     fn read_32(&mut self, _addr: u32) -> Result<u32, Fault> {
         Err(Fault::WrongRegisterSize {
             expected: 8,
@@ -605,7 +661,7 @@ impl MMIO for Stdio {
             expected: 8,
             actual: 32,
         })
-    }
+    } */
 }
 
 #[cfg(feature = "std")]
