@@ -514,15 +514,15 @@ pub trait MMIO {
 ## Flags
 | Bits | Description | Type |
 |:----:|:------------|:----:|
-| 31:2 | Reserved | - |
+| 31:3 | Reserved | - |
+| 2    | Flush output – write 1 to flush output buffer | SC |
 | 1    | Output lock ­– 1 if output is locked, 0 otherwise | RW |
-| 0    | Input ready – 1 if input is available, 0 otherwise | RO |
+| 0    | Input ready – currently unused | RO |
 */
 pub struct Stdio {
     input: std::io::Stdin,
     output: std::io::Stdout,
 
-    input_ready: bool,
     output_lock: Option<std::io::StdoutLock<'static>>,
 }
 
@@ -532,7 +532,6 @@ impl Stdio {
         Self {
             input: std::io::stdin(),
             output: std::io::stdout(),
-            input_ready: false,
             output_lock: None,
         }
     }
@@ -556,8 +555,8 @@ impl MMIO for Stdio {
             Some(0x4) => Err(Fault::WriteOnlyRegister), // OUTPUT
             Some(0x8) => {
                 // FLAGS
-                // Bit 0: input ready, Bit 1: output lock
-                Ok((self.input_ready as u8) | (self.output_lock.is_some() as u8) << 1)
+                // Bit 0: currently unused, Bit 1: output lock, Bit 2: write-only
+                Ok((self.output_lock.is_some() as u8) << 1)
             }
             _ => Err(Fault::InvalidAddress(addr)),
         }
@@ -576,10 +575,16 @@ impl MMIO for Stdio {
             Some(0x8) => {
                 // FLAGS
                 // Read-only bits are ignored
-                match (value & 0b10) != 0 {
-                    false => drop(self.output_lock.take()),
-                    true => self.output_lock = Some(self.output.lock()),
+                self.output_lock = if (value & (1 << 1)) != 0 {
+                    Some(self.output.lock())
+                } else {
+                    None
+                };
+
+                if (value & (1 << 2)) != 0 {
+                    self.output.flush().map_err(|_| Fault::IOError)?
                 }
+
                 Ok(())
             }
             _ => Err(Fault::InvalidAddress(addr)),

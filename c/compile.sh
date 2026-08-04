@@ -11,12 +11,16 @@ cd "$script_dir"
 
 mkdir -p target
 
+# Filename expansion patterns that match no files expand to a null string, rather than themselves.
+shopt -s nullglob
+driver_sources=(drivers/*.c)
+
 clang -O -flto --target=riscv32-none -march=rv32i -mabi=ilp32 -std=gnu23 \
     -ffreestanding -fno-builtin -nostdlib -nostartfiles \
     -Wall -Wextra -fvisibility=hidden \
     -static -fuse-ld=lld \
     -Wl,-T,"linker.ld" \
-    "start.S" "$1" -o "target/${1%.c}.elf"
+    "start.S" "$1" "${driver_sources[@]}" -o "target/${1%.c}.elf"
 llvm-strip "target/${1%.c}.elf"
 llvm-objdump "target/${1%.c}.elf" -d
 
