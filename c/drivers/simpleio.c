@@ -223,3 +223,32 @@ void printf(const char* restrict format, ...) {
 };
 
 // ------------------------------------------------------------------------------------------------
+
+// https://cdecl.plus/?q=int%2A%20const%20restrict%20result
+int string_to_int(const char* restrict str, int* const restrict result) {
+    if (str == nullptr || result == nullptr) {
+        return -1; // Invalid input
+    }
+
+    register int tmp = 0;
+    int sign = 1;
+
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+
+    while (*str != '\0') {
+        if (*str < '0' || *str > '9') {
+            return -1; // Invalid character
+        }
+        tmp = (tmp * 10) + (*str - '0');
+        str++;
+    }
+    tmp *= sign;
+
+    *result = tmp;
+    return 0; // Success
+}

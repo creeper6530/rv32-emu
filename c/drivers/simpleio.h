@@ -33,4 +33,6 @@ void vsprintf(char* restrict buffer, const char* restrict format, va_list args);
 void sprintf(char* restrict buffer, const char* restrict format, ...);
 void printf(const char* restrict format, ...);
 
+int string_to_int(const char* restrict str, int* const restrict result);
+
 #endif // DRIVERS_SIMPLEIO_H
